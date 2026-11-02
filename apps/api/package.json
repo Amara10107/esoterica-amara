@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup src/index.ts src/seed.ts src/backup-mongo.ts --format esm --target node20 --clean --noExternal @amara/shared --noExternal @amara/sync --noExternal @amara/database",
+    "build": "tsup",
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "backup:mongo": "tsx src/backup-mongo.ts",

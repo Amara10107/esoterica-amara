@@ -93,3 +93,7 @@ Quedan solo en la web: crear/editar usuarios y sucursales, alta de permisos temp
 - Los vigentes primero se **Revocan** (no se pueden borrar mientras sirvan).
 - Borrar no elimina nada de la base: queda en el historial y en la auditoría (`permiso_temporal.borrar`, `token.borrar`).
 - API: `POST /admin/grants/:id/hide` y `POST /security/tokens/:id/hide` (`{ hidden: true|false }`); `GET` acepta `?hidden=1` para el historial.
+
+## v2.4.6 — Corrige la compilación de la API en Render
+- El comando `build` de `apps/api` pasaba `--noExternal` como argumento de línea de comandos, pero `tsup` 8.x no acepta esa opción así (solo en un archivo de configuración). Esto hacía fallar el despliegue en Render con `CACError: Unknown option --noExternal`.
+- Se agregó `apps/api/tsup.config.ts` con esa opción y se simplificó el script `build` a solo `tsup`. El resultado final (qué se empaqueta) es el mismo.
