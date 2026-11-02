@@ -62,9 +62,8 @@ describe('vendedor: sin administración, caja ni archivo', () => {
       expect((await api.get(p).set(as('vendedor'))).status).toBe(403);
     });
   }
-  it('no puede hacer corte, apertura de caja ni movimientos de caja', async () => {
+  it('no puede hacer corte sin autorización ni movimientos de caja (abrir caja sí puede)', async () => {
     expect((await api.post('/cash/close').set(as('vendedor')).send({ countedCents: 0, terminalId: 't' })).status).toBe(403);
-    expect((await api.post('/cash/open').set(as('vendedor')).send({ terminalId: 't', branchId: BR, openingCents: 0 })).status).toBe(403);
     expect((await api.post('/cash/movements').set(as('vendedor')).send({})).status).toBe(403);
   });
   it('no puede cancelar, devolver, transferir, crear productos ni administrar', async () => {
@@ -205,4 +204,43 @@ describe('v2: tokens de seguridad, configuración de extras y resumen de hoy', (
     expect((await api.post('/admin/terminals').set(as('vendedor')).send({ kind: 'movil', branchId: BR })).status).toBe(403);
     expect((await api.patch('/admin/terminals/x').set(as('vendedor')).send({ assignedTo: 'Ana' })).status).toBe(403);
   });
+});
+
+describe('v2.3: anticipos de limpias y corte por periodo solo para el gerente', () => {
+  for (const role of ['vendedor', 'desarrollador'] as const) {
+    for (const path of ['/advances', '/advances/abc', '/cash/period-cuts', '/cash/period-cuts/abc', '/cash/period-cuts/preview?from=2026-10-19&to=2026-10-25']) {
+      it(`${role} recibe 403 en GET ${path}`, async () => {
+        expect((await api.get(path).set(as(role))).status).toBe(403);
+      });
+    }
+    it(`${role} recibe 403 al agregar un abono o guardar un corte`, async () => {
+      expect((await api.post('/advances/abc/entries').set(as(role)).send({ kind: 'abono', amountCents: 100 })).status).toBe(403);
+      expect((await api.post('/cash/period-cuts').set(as(role)).send({ from: '2026-10-19', to: '2026-10-25' })).status).toBe(403);
+    });
+  }
+});
+
+describe('v2.3.4: agregar variantes a un producto existente', () => {
+  for (const role of ['vendedor', 'desarrollador'] as const) {
+    it(`${role} recibe 403 al agregar una variante`, async () => {
+      expect((await api.post('/catalog/products/abc/variants').set(as(role)).send({ variants: [{ label: 'x', costCents: 1, priceCents: 2 }] })).status).toBe(403);
+    });
+  }
+});
+
+describe('v2.4.4: borrar productos (papelera) solo con permiso de edición', () => {
+  for (const role of ['vendedor', 'desarrollador'] as const) {
+    it(`${role} recibe 403 al borrar un producto`, async () => {
+      expect((await api.post('/catalog/products/abc/delete').set(as(role)).send({})).status).toBe(403);
+    });
+  }
+});
+
+describe('v2.4.5: borrar permisos temporales y tokens (historial) solo para el gerente', () => {
+  for (const role of ['vendedor', 'desarrollador'] as const) {
+    it(`${role} recibe 403 al borrar un permiso temporal o un token`, async () => {
+      expect((await api.post('/admin/grants/abc/hide').set(as(role)).send({ hidden: true })).status).toBe(403);
+      expect((await api.post('/security/tokens/abc/hide').set(as(role)).send({ hidden: true })).status).toBe(403);
+    });
+  }
 });

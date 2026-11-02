@@ -176,7 +176,7 @@ export function buildProductPayload(form: ProductForm): BuildResult {
     if (price === null) pre[`variants.${i}.priceCents`] = 'Importe no válido (ejemplo: 250.00)';
     if (min === null || min < 0) pre[`variants.${i}.minStock`] = 'Debe ser un entero de 0 o más';
     return {
-      label: v.label,
+      label: v.label.trim() || (form.variants.length === 1 ? 'Única' : `Variante ${i + 1}`),
       unit: v.unit || 'pieza',
       barcode: opt(v.barcode),
       costCents: cost ?? 0,
@@ -242,6 +242,28 @@ export function buildProductPayload(form: ProductForm): BuildResult {
  * Edición de datos del producto (PATCH). A diferencia del alta, los textos vacíos se envían
  * como "" para que el servidor pueda borrar marca, descripción, notas o foto.
  */
+/** v2.3.4: cuerpo de POST /catalog/products/:id/variants (una variante nueva con su código de barras y su existencia inicial >= 1). */
+export function buildVariantAddPayload(v: VariantForm, branchId: string, qtyText: string, autoLabel = 'Variante'): BuildResult {
+  const errs: FieldErrors = {};
+  const cost = parseMoneyInput(v.cost);
+  const price = parseMoneyInput(v.price);
+  const min = parseIntInput(v.minStock === '' ? '0' : v.minStock);
+  const qty = parseIntInput(qtyText);
+  if (cost === null) errs.costCents = 'Importe no válido (ejemplo: 125.50)';
+  if (price === null) errs.priceCents = 'Importe no válido (ejemplo: 250.00)';
+  if (min === null || min < 0) errs.minStock = 'Debe ser un entero de 0 o más';
+  if (!branchId) errs.branchId = 'Elige la sucursal';
+  if (qty === null || qty < 1) errs.qty = 'Obligatorio: existencia inicial de 1 o más';
+  if (Object.keys(errs).length > 0) return { payload: null, errors: errs } as BuildResult;
+  return {
+    payload: {
+      variants: [{ label: v.label.trim() || autoLabel, unit: v.unit || 'pieza', barcode: opt(v.barcode), costCents: cost!, priceCents: price!, minStock: min!, location: opt(v.location) }],
+      initialStock: [{ variantIndex: 0, branchId, qty: qty!, location: opt(v.location) }],
+    },
+    errors: {},
+  } as BuildResult;
+}
+
 export function buildProductEditPayload(form: ProductForm): BuildResult {
   const pre: FieldErrors = {};
   const { specs, error } = buildSpecs(form.specs);

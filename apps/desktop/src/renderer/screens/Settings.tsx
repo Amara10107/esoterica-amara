@@ -5,9 +5,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as QRCodeNs from 'qrcode';
 import type { AppSettings } from '../../shared/settings.ts';
-import type { BackupLogRow, LanState, PrinterInfo } from '../../shared/ipc.ts';
-import { ExtraCategoriesCard } from '../components/ExtraCategoriesCard.tsx';
+import type { BackupLogRow, LanState, PrinterInfo, SensitiveAuth } from '../../shared/ipc.ts';
+import { ExtraCatalogCard } from '../components/ExtraCatalogCard.tsx';
 import { Banner, Field } from '../components/Field.tsx';
+import { AuthPrompt } from '../components/AuthPrompt.tsx';
 import { Modal } from '../components/Modal.tsx';
 import { call, errorText, onEvent } from '../lib/api.ts';
 import { dateTime } from '../lib/format.ts';
@@ -185,7 +186,7 @@ export function SettingsScreen() {
         <button className="btn" onClick={() => void testPrint('label')} disabled={busy !== null}>Imprimir etiqueta de prueba</button>
       </section>
 
-      <ExtraCategoriesCard />
+      <ExtraCatalogCard />
 
       <section className="card">
         <h3>Respaldos de la base de datos</h3>
@@ -277,8 +278,10 @@ export function SettingsScreen() {
   );
 }
 
-function PairModal({ lan, onClose }: { lan: LanState; onClose: () => void }) {
+export function PairModal({ lan, onClose }: { lan: LanState; onClose: () => void }) {
   const [host, setHost] = useState(lan.hostCandidates[0] ?? '');
+  const [auth, setAuth] = useState<SensitiveAuth | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
   const [qr, setQr] = useState<string | null>(null);
   const [state, setState] = useState<LanState>(lan);
   const [error, setError] = useState<string | null>(null);
@@ -298,11 +301,12 @@ function PairModal({ lan, onClose }: { lan: LanState; onClose: () => void }) {
   const start = async () => {
     setError(null);
     try {
-      const s = await call('lan:startPairing', { host });
+      const s = await call('lan:startPairing', { host, ...(auth ?? {}) });
       setState(s);
       setQr(s.pairing ? await QRCode.toDataURL(s.pairing.payloadText, { margin: 2, width: 320, errorCorrectionLevel: 'M' }) : null);
     } catch (e) {
       setError(errorText(e));
+      setResetSignal((n) => n + 1); // el boleto de un vendedor sirve una sola vez: hay que autorizar de nuevo
     }
   };
 
@@ -321,7 +325,8 @@ function PairModal({ lan, onClose }: { lan: LanState; onClose: () => void }) {
                 {lan.hostCandidates.map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </Field>
-            <button className="btn btn-gold btn-lg" onClick={() => void start()} disabled={!host}>Mostrar código QR</button>
+            <AuthPrompt purpose="escaner" managerFree onChange={setAuth} resetSignal={resetSignal} />
+            <button className="btn btn-gold btn-lg" onClick={() => void start()} disabled={!host || !auth}>Mostrar código QR</button>
           </>
         )}
         {qr && state.pairing && (

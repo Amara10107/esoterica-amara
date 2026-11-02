@@ -137,20 +137,20 @@ test('caja cerrada bloquea ventas; vendedor no puede abrir caja ni cortar', asyn
     store.registerSale({ saleId: newId(), actor: vendedor, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], payments: cash(9000) }),
     (e: unknown) => e instanceof StoreError && e.code === 'caja_cerrada',
   );
-  await assert.rejects(store.openCash({ actor: vendedor, branchId: B1, terminalId: T1, openingCents: 0 }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
-  await store.openCash({ actor: gerente, branchId: B1, terminalId: T1, openingCents: 50000 });
+  await assert.rejects(store.openCash({ actor: dev, branchId: B1, terminalId: T1, openingCents: 0 }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
+  await store.openCash({ actor: vendedor, branchId: B1, terminalId: T1, openingCents: 50000 }); // el vendedor sí puede abrir
   // v2: el vendedor sin contraseña de admin ni token no puede cortar; el desarrollador nunca.
   await assert.rejects(store.closeCash({ actor: vendedor, terminalId: T1, countedCents: 50000 }), (e: unknown) => e instanceof StoreError && e.code === 'autorizacion_requerida');
   await assert.rejects(store.closeCash({ actor: dev, terminalId: T1, countedCents: 50000 }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
   await assert.rejects(store.openCash({ actor: gerente, branchId: B1, terminalId: T1, openingCents: 1 }), (e: unknown) => e instanceof StoreError && e.code === 'caja_abierta');
 });
 
-test('permisos: vendedor no cancela ni da descuentos; desarrollador no vende', async () => {
+test('permisos: vendedor no cancela ni da descuentos sin autorización; desarrollador no vende', async () => {
   const { store } = await readyStore();
   const s = await store.registerSale({ saleId: newId(), actor: vendedor, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], payments: cash(9000) });
   await assert.rejects(store.cancelSale({ saleId: s.sale.id, actor: vendedor, terminalId: T1, reason: 'error' }), (e: unknown) => e instanceof StoreError && e.code === 'autorizacion_requerida');
   await assert.rejects(store.cancelSale({ saleId: s.sale.id, actor: dev, terminalId: T1, reason: 'error' }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
-  await assert.rejects(store.registerSale({ saleId: newId(), actor: vendedor, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], discountCents: 500, payments: cash(8500) }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
+  await assert.rejects(store.registerSale({ saleId: newId(), actor: vendedor, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], discountCents: 500, payments: cash(8500) }), (e: unknown) => e instanceof StoreError && e.code === 'autorizacion_requerida');
   await assert.rejects(store.registerSale({ saleId: newId(), actor: dev, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], payments: cash(9000) }), (e: unknown) => e instanceof StoreError && e.code === 'sin_permiso');
   const g = await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], discountCents: 500, payments: cash(8500) });
   assert.equal(g.sale.totalCents, 8500);
@@ -351,7 +351,7 @@ test('migraciones son idempotentes e integridad ok', async () => {
   await store.migrate();
   await store.migrate();
   const v = await store.db.all<any>('SELECT version FROM schema_migrations ORDER BY version');
-  assert.deepEqual(v.map((r) => r.version), [1, 2]);
+  assert.deepEqual(v.map((r) => r.version), [1, 2, 3]);
   assert.deepEqual(await store.integrityCheck(), { ok: true, problems: [] });
   void Clock;
 });

@@ -24,5 +24,14 @@ export function terminalName(kind: TerminalKind, assignedTo: string | undefined,
 /** Forma pública del contrato: nunca incluye la versión del token. */
 export function terminalPublic(t: Record<string, any>) {
   const { _id, tokenVersion: _v, ...rest } = t;
-  return { id: (_id ?? t.id) as string, ...rest, assignedTo: (t.assignedTo ?? null) as string | null };
+  return { id: (_id ?? t.id) as string, ...rest, branchIds: terminalBranchIds({ branchId: t.branchId, branchIds: t.branchIds }), assignedTo: (t.assignedTo ?? null) as string | null };
+}
+
+/** v2.1: una terminal puede trabajar en una o varias sucursales (`branchId` es la principal). */
+export function terminalBranchIds(t: { branchId: string; branchIds?: string[] | null }): string[] {
+  return [...new Set([t.branchId, ...(t.branchIds ?? [])])];
+}
+
+export function terminalAllowsBranch(t: { branchId: string; branchIds?: string[] | null }, branchId: string): boolean {
+  return terminalBranchIds(t).includes(branchId);
 }

@@ -62,7 +62,7 @@ describe('ticket térmico', () => {
     const html = buildTicketHtml(ticket, { paperMm: 80, copy: 'cliente', logoSrc: 'file:///C:/app/logo-ticket.png' });
     expect(html).toContain('<img class="logo" src="file:///C:/app/logo-ticket.png"');
     expect(html).toMatch(/\.logo \{[^}]*height: auto/);
-    expect(html).toMatch(/\.logo \{[^}]*width: 40mm/);
+    expect(html).toMatch(/\.logo \{[^}]*width: 18mm/);
     // sin logo no hay <img>
     expect(buildTicketHtml(ticket, { paperMm: 80, copy: 'cliente' })).not.toContain('<img');
   });

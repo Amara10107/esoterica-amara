@@ -4,16 +4,20 @@
  *  - LocalStore.registerSale guarda en UNA transacción venta, partidas, pagos, ticket, movimientos de
  *    inventario, operación de sincronización y auditoría. Solo DESPUÉS del guardado se muestra el folio.
  *  - Descuenta las existencias LOCALES y sobrevive reinicios (SQLite en disco, WAL + synchronous FULL).
- *  - Se sincroniza sola al haber conexión. Sin descuentos en el móvil (los fija el gerente en caja).
+ *  - Se sincroniza sola al haber conexión.
+ *  - Descuento: el administrador lo da libremente; el vendedor solo con contraseña de admin o token 'descuento' (AuthModal).
  */
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { formatMXN, isExtraCategory } from '@amara/shared';
+import { extrasForType, formatMXN } from '@amara/shared';
+import type { ExtraOption } from '@amara/shared';
 import type { PaymentMethod, Sale } from '@amara/shared';
 import { StoreError } from '@amara/database';
 import type { CatalogHit } from '@amara/database';
 import { Banner, Button, Card, Chip, ChipRow, Divider, Field, H1, H2, Loading, Muted, Row, Screen } from '../src/components/ui';
+import { AuthModal } from '../src/components/AuthModal';
+import type { AuthSuccess } from '../src/components/AuthModal';
 import { StatusBanner } from '../src/components/StatusBanner';
 import { Sheet } from '../src/components/Sheet';
 import { SaleTicketView } from '../src/components/SaleTicketView';
@@ -59,13 +63,19 @@ export default function CartScreen() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sellerId, setSellerId] = useState<string | null>(null);
   const [sellerOpen, setSellerOpen] = useState(false);
-  const [extraCats, setExtraCats] = useState<string[]>([]);
+  const [extraCatalog, setExtraCatalog] = useState<ExtraOption[]>([]);
   const [extraFor, setExtraFor] = useState<string | null>(null);
-  const [extraAmount, setExtraAmount] = useState('');
-  const [extraNote, setExtraNote] = useState('');
   const [extraError, setExtraError] = useState<string | null>(null);
 
-  const total = cart.totalCents;
+  // Descuento a toda la venta. `gross` es el subtotal del carrito; `total` ya lleva el descuento.
+  const gross = cart.totalCents;
+  const [discountText, setDiscountText] = useState('');
+  const [discountCents, setDiscountCents] = useState(0);
+  const [discountAuth, setDiscountAuth] = useState<AuthSuccess | null>(null);
+  const [askDiscountAuth, setAskDiscountAuth] = useState<number | null>(null);
+  const isManager = app.can('ventas.descuento');
+  const canDiscount = isManager || app.session?.user.role === 'vendedor';
+  const total = Math.max(0, gross - discountCents);
   const cartEmpty = cart.cart.lines.length === 0 && (cart.cart.extras ?? []).length === 0;
   const sum = summarizePayments(total, payments);
 
@@ -73,6 +83,13 @@ export default function CartScreen() {
   useEffect(() => {
     setPayments([]);
   }, [total]);
+
+  // Si cambia el carrito, el descuento (y su autorización) se descartan: había sido para otro importe.
+  useEffect(() => {
+    setDiscountCents(0);
+    setDiscountText('');
+    setDiscountAuth(null);
+  }, [gross]);
 
   // Empleados de la sucursal y categorías que admiten "Extra" (datos locales: funciona sin conexión).
   useEffect(() => {
@@ -83,8 +100,8 @@ export default function CartScreen() {
       .then((e) => !off && setEmployees(e))
       .catch(() => undefined);
     store
-      .getExtraCategories()
-      .then((c) => !off && setExtraCats(c))
+      .getExtraCatalog()
+      .then((c) => !off && setExtraCatalog(c))
       .catch(() => undefined);
     return () => {
       off = true;
@@ -144,6 +161,8 @@ export default function CartScreen() {
         terminalId: terminal.terminalId,
         items: toSaleItems(cart.cart),
         payments: toPaymentInputs(payments),
+        ...(discountCents > 0 ? { discountCents } : {}),
+        ...(discountCents > 0 && discountAuth ? { authorization: discountAuth.authorization, authorizationTrusted: discountAuth.trusted } : {}),
         // v2: quien vendió. Queda en el sistema; NO se imprime en el ticket.
         sellerId: seller?.id ?? app.session?.user.id ?? null,
         sellerName: seller?.name ?? app.session?.user.name ?? null,
@@ -152,6 +171,9 @@ export default function CartScreen() {
       setDone({ sale: r.sale, duplicate: r.duplicate, warnings: r.warnings });
       cart.reset();
       setPayments([]);
+      setDiscountCents(0);
+      setDiscountText('');
+      setDiscountAuth(null);
       app.notifyDataChanged();
       void replicateSaleToPc(store, r.sale.id); // réplica opcional a la PC vinculada
       void app.syncNow('auto'); // envío al servidor si hay conexión
@@ -167,19 +189,25 @@ export default function CartScreen() {
     }
   }
 
-  function saveExtra() {
+  function applyDiscount(cents: number) {
+    if (cents <= 0 || cents >= gross) return setError(cents >= gross ? 'El descuento no puede ser igual o mayor al total.' : 'Escribe un descuento válido.');
+    setError(null);
+    if (isManager) return setDiscountCents(cents);
+    setAskDiscountAuth(cents); // vendedor: primero la autorización
+  }
+
+  function pickExtra(option: ExtraOption) {
     const line = cart.cart.lines.find((l) => l.variantId === extraFor);
     if (!line) return;
-    const cents = parseMoneyInput(extraAmount);
-    if (cents === null || cents <= 0) return setExtraError('Escribe el monto del extra (mayor a cero).');
-    const note = extraNote.trim();
-    if (note.length < 2) return setExtraError('Escribe una nota que explique el extra.');
-    cart.addExtraLine({ variantId: line.variantId, productName: line.productName, label: line.label, amountCents: cents, note: note.slice(0, 120) });
+    if ((cart.cart.extras ?? []).some((e) => e.variantId === line.variantId && e.extraId === option.id)) {
+      return setExtraError(`"${option.name}" ya está agregado a este producto.`);
+    }
+    // El precio y el nombre son los que fijó el administrador: aquí no se escriben ni se cambian.
+    cart.addExtraLine({ variantId: line.variantId, productName: line.productName, label: line.label, amountCents: option.priceCents, note: option.name, extraId: option.id });
     setExtraFor(null);
-    setExtraAmount('');
-    setExtraNote('');
     setExtraError(null);
   }
+
 
   function tryAdd(h: CatalogHit) {
     const reason = cart.add(h, 1);
@@ -225,7 +253,7 @@ export default function CartScreen() {
                 {l.label} · {formatMXN(l.unitPriceCents)} c/u{l.available !== undefined ? ` · existencia ${l.available}` : ''}
               </Text>
               <Text style={styles.lineTotal}>{formatMXN(l.qty * l.unitPriceCents)}</Text>
-              {isExtraCategory(l.category, extraCats) ? (
+              {extrasForType(extraCatalog, l.ptype).length > 0 ? (
                 <Pressable accessibilityRole="button" onPress={() => { setExtraFor(l.variantId); setExtraError(null); }} style={styles.extraBtn}>
                   <Text style={styles.extraBtnText}>+ Extra</Text>
                 </Pressable>
@@ -251,8 +279,39 @@ export default function CartScreen() {
           </View>
         ))}
         <Divider />
+        {discountCents > 0 ? <Row label="Subtotal" value={formatMXN(gross)} /> : null}
+        {discountCents > 0 ? <Row label="Descuento" value={`-${formatMXN(discountCents)}`} /> : null}
         <Row label="TOTAL" value={formatMXN(total)} strong />
       </Card>
+
+      {canDiscount && gross > 0 ? (
+        <Card>
+          <H2>Descuento</H2>
+          {discountCents > 0 ? (
+            <>
+              <Muted>{isManager ? 'Descuento aplicado.' : 'Descuento autorizado.'}</Muted>
+              <Button title="Quitar descuento" variant="secondary" onPress={() => { setDiscountCents(0); setDiscountText(''); setDiscountAuth(null); }} />
+            </>
+          ) : (
+            <>
+              {!isManager ? <Muted>Necesita la contraseña de un administrador o un token de descuento.</Muted> : null}
+              <ChipRow>
+                {[5, 10, 15, 20].map((p) => (
+                  <Chip key={p} label={`${p}%`} selected={false} onPress={() => applyDiscount(Math.round((gross * p) / 100))} />
+                ))}
+              </ChipRow>
+              <Field label="Descuento en pesos ($)" value={discountText} onChangeText={setDiscountText} keyboardType="decimal-pad" placeholder="0.00" />
+              <Button title="Aplicar descuento" variant="secondary" onPress={() => applyDiscount(parseMoneyInput(discountText) ?? 0)} />
+            </>
+          )}
+        </Card>
+      ) : null}
+      <AuthModal
+        visible={askDiscountAuth !== null}
+        purpose="descuento"
+        onCancel={() => setAskDiscountAuth(null)}
+        onAuthorized={(a) => { setDiscountAuth(a); setDiscountCents(askDiscountAuth ?? 0); setAskDiscountAuth(null); }}
+      />
 
       <Field label="Agregar sin escáner (buscar)" value={query} onChangeText={setQuery} placeholder="Nombre o código" autoCorrect={false} />
       {notice ? <Banner kind="warn" text={notice} /> : null}
@@ -331,12 +390,12 @@ export default function CartScreen() {
       </Sheet>
 
       <Sheet visible={extraFor !== null} title="Agregar extra" onClose={() => setExtraFor(null)}>
-        <Muted>Cargo adicional sobre este producto (por ejemplo, personalización). No descuenta inventario.</Muted>
-        <Field label="Monto del extra" value={extraAmount} onChangeText={setExtraAmount} keyboardType="decimal-pad" placeholder="0.00" />
-        <Field label="Nota" value={extraNote} onChangeText={setExtraNote} placeholder="Ej. Grabado con nombre" maxLength={120} />
+        <Muted>Elige un extra para este producto. El precio lo fija el administrador. No descuenta inventario.</Muted>
+        {extrasForType(extraCatalog, cart.cart.lines.find((l) => l.variantId === extraFor)?.ptype).map((o) => (
+          <Button key={o.id} title={`${o.name} · ${formatMXN(o.priceCents)}`} variant="secondary" onPress={() => pickExtra(o)} />
+        ))}
         {extraError ? <Banner kind="error" text={extraError} /> : null}
-        <Button title="Agregar extra" onPress={saveExtra} />
-        <Button title="Cancelar" variant="secondary" onPress={() => setExtraFor(null)} />
+        <Button title="Cerrar" variant="secondary" onPress={() => setExtraFor(null)} />
       </Sheet>
     </Screen>
   );
@@ -359,7 +418,7 @@ const styles = StyleSheet.create({
   step: { width: 48, height: 48, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   stepText: { fontSize: 24, fontWeight: '800', color: colors.text },
   qty: { minWidth: 28, textAlign: 'center', fontSize: 18, fontWeight: '900', color: colors.text },
-  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   plus: { fontSize: 28, fontWeight: '800', color: colors.gold, paddingHorizontal: space.sm },
   payRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 44 },
   extraBtn: { alignSelf: 'flex-start', minHeight: 40, justifyContent: 'center', paddingHorizontal: space.md, marginTop: space.xs, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.gold },

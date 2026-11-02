@@ -7,6 +7,8 @@
  *  - El proceso principal y el almacén local VUELVEN a validar todo; esto solo evita errores en pantalla.
  */
 import type { CatalogHit } from '@amara/database';
+import { typeKey } from '@amara/shared';
+import type { ExtraOption } from '@amara/shared';
 
 export type CartKind = 'producto' | 'extra';
 
@@ -19,6 +21,8 @@ export interface CartLine {
   label: string;
   code: string;
   category: string;
+  /** v2.1. Tipo de producto ("vela", "pulsera"...): decide qué extras se pueden ofrecer. */
+  ptype?: string;
   unitPriceCents: number;
   qty: number;
   /** Existencia local al agregar (ya sin negativos). Los extras no la usan. */
@@ -27,6 +31,8 @@ export interface CartLine {
   extraNote?: string;
   /** Solo extras: línea de producto a la que acompañan. */
   parentKey?: string;
+  /** v2.1. Solo extras de venta normal: id del extra del catálogo (el precio sale de ahí). */
+  extraId?: string;
 }
 
 export const MAX_LINE_QTY = 9999;
@@ -70,7 +76,7 @@ export type AddResult =
 const fullName = (name: string, label: string) => (label && label !== 'Única' ? `${name} - ${label}` : name);
 
 /** Agrega una pieza del producto. Rechaza si no hay existencia o ya se agregó todo lo disponible. */
-export function addProduct(lines: CartLine[], h: Pick<CatalogHit, 'variantId' | 'productName' | 'label' | 'barcode' | 'internalCode' | 'category' | 'priceCents' | 'qty'>): AddResult {
+export function addProduct(lines: CartLine[], h: Pick<CatalogHit, 'variantId' | 'productName' | 'label' | 'barcode' | 'internalCode' | 'category' | 'priceCents' | 'qty'> & { type?: string }): AddResult {
   const avail = stockView(h.qty).shown;
   const name = fullName(h.productName, h.label);
   if (avail <= 0) return { ok: false, reason: 'sin_existencia', message: `${name}: Sin existencia. No se puede vender.` };
@@ -88,7 +94,7 @@ export function addProduct(lines: CartLine[], h: Pick<CatalogHit, 'variantId' | 
       ...lines,
       {
         key, kind: 'producto', variantId: h.variantId, productName: h.productName, label: h.label, code: h.barcode ?? h.internalCode,
-        category: h.category ?? '', unitPriceCents: h.priceCents, qty: 1, stockQty: avail,
+        category: h.category ?? '', ptype: h.type ?? '', unitPriceCents: h.priceCents, qty: 1, stockQty: avail,
       },
     ],
   };
@@ -134,6 +140,27 @@ export function addExtra(lines: CartLine[], parentKey: string, amountCents: numb
   return { ok: true, lines: [...lines.slice(0, idx), extra, ...lines.slice(idx)] };
 }
 
+/**
+ * v2.1. Agrega un extra DEL CATÁLOGO (nombre y precio fijos que puso el administrador) ligado a una línea de producto.
+ * Debe ser de su mismo tipo y estar activo. Varios extras distintos pueden acompañar al mismo producto, pero no el mismo dos veces.
+ */
+export function addCatalogExtra(lines: CartLine[], parentKey: string, option: ExtraOption, id: string): ExtraResult {
+  const parent = lines.find((l) => l.key === parentKey && l.kind === 'producto');
+  if (!parent) return { ok: false, message: 'Ese producto ya no está en la venta.' };
+  if (!option.active) return { ok: false, message: 'Ese extra está desactivado.' };
+  if (typeKey(option.type) !== typeKey(parent.ptype)) return { ok: false, message: 'Ese extra no corresponde al tipo de este producto.' };
+  if (lines.some((l) => l.kind === 'extra' && l.parentKey === parentKey && l.extraId === option.id)) {
+    return { ok: false, message: `"${option.name}" ya está agregado a este producto.` };
+  }
+  const extra: CartLine = {
+    key: `x:${id}`, kind: 'extra', variantId: parent.variantId, productName: parent.productName, label: parent.label, code: parent.code,
+    category: parent.category, ptype: parent.ptype, unitPriceCents: option.priceCents, qty: 1, stockQty: 0, extraNote: option.name, parentKey, extraId: option.id,
+  };
+  let idx = lines.findIndex((l) => l.key === parentKey) + 1;
+  while (idx < lines.length && lines[idx]!.parentKey === parentKey) idx++;
+  return { ok: true, lines: [...lines.slice(0, idx), extra, ...lines.slice(idx)] };
+}
+
 /** Importe de una línea (los extras cuentan como ingreso, no como piezas). */
 export const lineTotal = (l: CartLine) => l.qty * l.unitPriceCents;
 export const subtotalOf = (lines: CartLine[]) => lines.reduce((a, l) => a + lineTotal(l), 0);
@@ -151,13 +178,14 @@ export interface SaleItemReq {
   kind?: CartKind;
   unitPriceCents?: number;
   extraNote?: string;
+  extraId?: string;
 }
 
 /** Líneas en el formato que espera el proceso principal. */
 export function toSaleItems(lines: CartLine[]): SaleItemReq[] {
   return lines.map((l) =>
     l.kind === 'extra'
-      ? { variantId: l.variantId, qty: 1, kind: 'extra' as const, unitPriceCents: l.unitPriceCents, extraNote: l.extraNote ?? '' }
+      ? { variantId: l.variantId, qty: 1, kind: 'extra' as const, unitPriceCents: l.unitPriceCents, extraNote: l.extraNote ?? '', ...(l.extraId ? { extraId: l.extraId } : {}) }
       : { variantId: l.variantId, qty: l.qty },
   );
 }

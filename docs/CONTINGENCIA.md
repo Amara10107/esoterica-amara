@@ -42,7 +42,7 @@ Igual que el punto 1: la tienda sigue vendiendo. Además:
 Funciona **solo si el teléfono ya había iniciado sesión con internet y sincronizado antes** (tiene catálogo y existencias de la sucursal).
 
 1. **Revisa la advertencia de datos desactualizados** en la app (aviso a partir de 1 hora sin sincronizar; crítico a las 24 horas). Las existencias que ves son las de la **última sincronización más lo que este teléfono haya vendido** después; **no incluyen** lo que la PC vendió y nunca le envió.
-2. **El gerente inicia sesión en el teléfono y abre la caja** del teléfono (con fondo inicial). Un vendedor **no puede abrir caja**, y mientras no haya caja abierta las ventas se bloquean.
+2. **El gerente inicia sesión en el teléfono y abre la caja** del teléfono (con fondo inicial). Un vendedor también puede abrir caja (cerrarla exige token o contraseña de administrador), y mientras no haya caja abierta las ventas se bloquean.
 3. El vendedor (o gerente) vende: escanea o busca, cobra, y la venta queda guardada **en el teléfono** con su **folio propio** (el código de terminal del teléfono es distinto al de la PC, así que los folios no chocan).
 4. **Tickets:** quedan guardados y se pueden reimprimir. Imprimir **depende de tu impresora y teléfono** (la app usa la impresión del sistema Android) **[hardware]**; no se garantiza imprimir en la térmica, y **si la térmica está conectada a la PC averiada, el teléfono no puede imprimir a través de ella**. Si no se puede imprimir, anota el folio y entrega el comprobante de otra forma (el cliente puede recibir el ticket más tarde).
 5. **Las ventas de emergencia se conservan** aunque cierres y abras la app (SQLite del teléfono).

@@ -58,7 +58,7 @@ test('migración v2 corre sobre una base V1 con datos reales sin perder ni alter
   const store = new LocalStore(createDb(fromSyncSqlite(raw)), { now: clock.now, verifyPassword: fakeVerify });
   await store.migrate();
 
-  assert.deepEqual((await store.db.all<any>('SELECT version FROM schema_migrations ORDER BY version')).map((r) => r.version), [1, 2]);
+  assert.deepEqual((await store.db.all<any>('SELECT version FROM schema_migrations ORDER BY version')).map((r) => r.version), [1, 2, 3]);
   assert.deepEqual(await store.integrityCheck(), { ok: true, problems: [] });
 
   // La venta V1 sigue igual y toma los valores por omisión.
@@ -102,7 +102,7 @@ test('migración v2 corre sobre una base V1 con datos reales sin perder ni alter
   assert.equal(r.sale.sellerName, 'Gerente', 'el nombre del vendedor se toma de los usuarios locales');
   assert.equal(r.sale.folio, 'AMA-AP1-261022-0002', 'el consecutivo de folios continúa donde iba V1');
   await store.migrate();
-  assert.equal((await store.db.get<any>('SELECT COUNT(*) AS n FROM schema_migrations'))?.n, 2, 'migrar de nuevo no repite nada');
+  assert.equal((await store.db.get<any>('SELECT COUNT(*) AS n FROM schema_migrations'))?.n, 3, 'migrar de nuevo no repite nada');
   raw.close();
 });
 
@@ -220,7 +220,7 @@ test('venta con extra: suma al total, no mueve inventario, guarda vendedor y not
   const saleId = newId();
   const r = await store.registerSale({
     saleId, actor: gerente, branchId: B1, terminalId: T1, sellerId: vendedor.userId, sellerName: 'Vendedora',
-    items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 2500, extraNote: 'Aceite aromático' }],
+    items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-aroma' }],
     payments: cash(20500),
   });
   assert.equal(r.sale.totalCents, 20500);
@@ -258,14 +258,28 @@ test('extra: reglas (qty 1, monto obligatorio y no negativo, precio 0 permitido)
   const { store } = await readyStore();
   const sale = (items: any[], pay = 20500, actor = vendedor) => store.registerSale({ saleId: newId(), actor, branchId: B1, terminalId: T1, items, payments: cash(pay) });
   await assert.rejects(sale([{ variantId: V_CH, qty: 2, kind: 'extra', unitPriceCents: 100 }]), (e) => code(e, 'cantidad_invalida'));
-  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra' }]), (e) => code(e, 'precio_invalido'));
-  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: -5 }]), (e) => code(e, 'precio_invalido'));
-  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 12.5 }]), (e) => code(e, 'precio_invalido'));
-  const free = await sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 0, extraNote: 'cortesía' }], 9000);
+  // v2.1: el extra SIEMPRE sale del catálogo: sin extraId (o inexistente / desactivado / de otro tipo) se rechaza.
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra' }]), (e) => code(e, 'extra_invalido'));
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 100 }]), (e) => code(e, 'extra_invalido'));
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', extraId: 'no-existe' }]), (e) => code(e, 'extra_invalido'));
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-off' }]), (e) => code(e, 'extra_invalido'));
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-pulsera' }]), (e) => code(e, 'extra_no_permitido'));
+  // El vendedor NO puede cambiar el precio: aunque mande otro monto, se cobra el del catálogo.
+  const forced = await sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-aroma', unitPriceCents: 1, extraNote: 'otro' }], 11500);
+  assert.equal(forced.sale.totalCents, 11500);
+  assert.equal(forced.sale.items[1]!.unitPriceCents, 2500);
+  assert.equal(forced.sale.items[1]!.extraNote, 'Aceite aromático');
+  const free = await sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-cortesia' }], 9000);
   assert.equal(free.sale.totalCents, 9000);
-  // Un extra con descuento de línea: solo el gerente puede aplicar descuentos.
-  await assert.rejects(sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 1000, lineDiscountCents: 100 }], 9900), (e) => code(e, 'sin_permiso'));
-  const disc = await sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 1000, lineDiscountCents: 100 }], 9900, gerente);
+  // Un extra con descuento de línea: el vendedor necesita autorización (contraseña de admin o token 'descuento').
+  await assert.rejects(sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-1000', lineDiscountCents: 100 }], 9900), (e) => code(e, 'autorizacion_requerida'));
+  const viaAdmin = await store.registerSale({
+    saleId: newId(), actor: vendedor, branchId: B1, terminalId: T1, payments: cash(9900),
+    items: [{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-1000', lineDiscountCents: 100 }],
+    authorization: { kind: 'admin_password', adminUserId: gerente.userId },
+  });
+  assert.equal(viaAdmin.sale.totalCents, 9900);
+  const disc = await sale([{ variantId: V_CH, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-1000', lineDiscountCents: 100 }], 9900, gerente);
   assert.equal(disc.sale.totalCents, 9900);
 });
 
@@ -273,7 +287,7 @@ test('un extra sobre un producto sin existencia no se bloquea por existencias (n
   const { store } = await readyStore();
   await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, items: [{ variantId: V_GR, qty: 4 }], payments: cash(60000) });
   assert.equal(await store.stockQty(V_GR, B1), 0);
-  const r = await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, items: [{ variantId: V_GR, qty: 1, kind: 'extra', unitPriceCents: 3000 }], payments: cash(3000) });
+  const r = await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, items: [{ variantId: V_GR, qty: 1, kind: 'extra', extraId: 'ex-3000' }], payments: cash(3000) });
   assert.equal(r.sale.totalCents, 3000);
   assert.equal(await store.stockQty(V_GR, B1), 0);
 });
@@ -283,7 +297,7 @@ test('cancelar o devolver una venta con extra: el extra devuelve dinero pero nun
   const mk = async () =>
     (await store.registerSale({
       saleId: newId(), actor: gerente, branchId: B1, terminalId: T1,
-      items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 2500 }], payments: cash(20500),
+      items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-aroma' }], payments: cash(20500),
     })).sale;
   const s1 = await mk();
   assert.equal(await store.stockQty(V_CH, B1), 8);
@@ -445,7 +459,7 @@ test('autorización verificada en línea por el servidor (authorizationTrusted):
 test('listTodaySalesSummary: solo hoy, con productos, cantidades y precios; más recientes primero', async () => {
   const clock = new Clock('2026-10-22T16:00:00.000Z');
   const { store } = await readyStore({ clock });
-  await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, sellerId: vendedor.userId, sellerName: 'Vendedora', items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 500, extraNote: 'moño' }], payments: cash(18500) });
+  await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, sellerId: vendedor.userId, sellerName: 'Vendedora', items: [{ variantId: V_CH, qty: 2 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-500' }], payments: cash(18500) });
   clock.advance(60_000);
   const l = await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, type: 'limpia', items: [{ variantId: V_GR, qty: 1 }], payments: cash(15000) });
   clock.advance(24 * 3600_000); // mañana
@@ -492,4 +506,25 @@ test('el consecutivo por orden de captura se conserva con más de 10 líneas', a
   const r = await store.registerSale({ saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, items, payments: cash(total) });
   const back = await store.getSale(r.sale.id);
   assert.deepEqual(back?.items.map((i) => i.id), r.sale.items.map((i) => i.id));
+});
+
+test('extras por tipo: tipos del inventario, catálogo descargado y copia local', async () => {
+  const { store } = await readyStore();
+  assert.deepEqual(await store.listProductTypes(), ['Velas']);
+  const cat = await store.getExtraCatalog();
+  assert.equal(cat.length, 8);
+  const saved = await store.setExtraCatalogLocal([{ id: 'a', type: ' Velas ', name: 'Moño', priceCents: 500 }, { id: 'a', type: 'x', name: 'repetido', priceCents: 1 }, { id: 'b', type: 'x', name: 'malo', priceCents: -3 }]);
+  assert.deepEqual(saved, [{ id: 'a', type: 'Velas', name: 'Moño', priceCents: 500, active: true }]);
+  assert.equal((await store.getExtraCatalog()).length, 1);
+});
+
+test('apariencia: el pull guarda el tema y getTheme lo devuelve; sin tema es claro', async () => {
+  const { store } = await readyStore();
+  assert.equal((await store.getTheme()).mode, 'claro');
+  const p = pullPayload();
+  p.settings = { ...(p.settings ?? {}), theme: { mode: 'oscuro', custom: { bg: '#000000', card: '#111111', surface: '#222222', text: '#FFFFFF', muted: '#CCCCCC', line: '#333333', accent: '#D3AD64', accentSoft: '#332211', primary: '#5E4392' }, presetId: 'medianoche' } };
+  await store.applyPull(p);
+  const t = await store.getTheme();
+  assert.equal(t.mode, 'oscuro');
+  assert.equal(t.custom.bg, '#000000');
 });

@@ -56,3 +56,60 @@
   .token-code { font-size: 24px; }
   .pdf-frame { height: 60vh; }
 }
+
+/* v2.1: logo nuevo (cuadrado) más pequeño */
+.brand-logo { width: 104px; }
+.login-logo { width: 120px; max-width: 50%; }
+
+/* v2.1: Extras por tipo */
+.extra-type { border-top: 1px solid var(--line); padding: 12px 0; }
+.extra-type h4 { margin: 0 0 8px; text-transform: capitalize; }
+.extra-row { display: grid; grid-template-columns: minmax(140px, 2fr) minmax(90px, 1fr) auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+@media (max-width: 640px) { .extra-row { grid-template-columns: 1fr 1fr; } }
+
+/* v2.2: botón Ver/Ocultar contraseña */
+.pw-wrap { position: relative; display: block; width: 100%; }
+.pw-wrap > input { width: 100%; padding-right: 74px; }
+.pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 1px solid var(--line); background: var(--bg); color: var(--ink-2, var(--ink)); border-radius: 6px; padding: 4px 10px; font-size: 0.8em; cursor: pointer; }
+.pw-toggle:hover { border-color: var(--gold); }
+
+/* v2.2: apariencia oscura / personalizada. Solo se activa cuando el administrador la elige
+   (html[data-amara-theme]); en modo claro no cambia nada de tu diseño. */
+html[data-amara-theme] { color-scheme: dark; }
+html[data-amara-theme="personalizado"] { color-scheme: light; }
+html[data-amara-theme] body { background: var(--bg); color: var(--ink); }
+html[data-amara-theme] .card, html[data-amara-theme] .modal, html[data-amara-theme] .kpi, html[data-amara-theme] .login-card,
+html[data-amara-theme] .picker-results, html[data-amara-theme] .picker-item, html[data-amara-theme] .legend-item,
+html[data-amara-theme] .chip, html[data-amara-theme] .btn, html[data-amara-theme] .thumb,
+html[data-amara-theme] input, html[data-amara-theme] select, html[data-amara-theme] textarea { background: var(--card); color: var(--ink); border-color: var(--line); }
+html[data-amara-theme] .btn-primary, html[data-amara-theme] .chip-active { background: var(--gold); border-color: var(--gold); color: #fff; }
+html[data-amara-theme] .table th { background: var(--bg-2); color: var(--ink-2); }
+html[data-amara-theme] .table td, html[data-amara-theme] .table th { border-color: var(--line); }
+html[data-amara-theme] .muted { color: var(--ink-3); }
+html[data-amara-theme] a { color: var(--gold); }
+
+/* v2.4: colores en apariencia oscura / personalizada. Los fondos claros fijos (insignias, celdas de corte, alertas, filas)
+   se ajustan para que el texto siempre se lea. En modo claro no cambia nada. */
+html[data-amara-theme] .badge-muted { background: var(--bg-2); color: var(--ink); border-color: var(--line); }
+html[data-amara-theme] .cell-esperado { background: transparent; }
+html[data-amara-theme] .cell-contado { background: transparent; }
+html[data-amara-theme] .table tbody tr:hover { background: var(--bg-2); }
+html[data-amara-theme] .row-archived td { background: var(--bg-2); }
+html[data-amara-theme] input:disabled, html[data-amara-theme] select:disabled { background: var(--bg-2); color: var(--ink-3); }
+html[data-amara-theme] .selected-box { color: var(--ink); }
+
+html[data-amara-theme="oscuro"] .badge-ok { background: rgba(70, 170, 120, 0.22); color: #9be3bc; border-color: rgba(155, 227, 188, 0.4); }
+html[data-amara-theme="oscuro"] .badge-warn { background: rgba(230, 170, 50, 0.22); color: #f3cf7c; border-color: rgba(243, 207, 124, 0.4); }
+html[data-amara-theme="oscuro"] .badge-danger { background: rgba(220, 80, 75, 0.24); color: #ffb3ae; border-color: rgba(255, 179, 174, 0.4); }
+html[data-amara-theme="oscuro"] .badge-info { background: rgba(90, 150, 220, 0.24); color: #a9cdf5; border-color: rgba(169, 205, 245, 0.4); }
+html[data-amara-theme="oscuro"] .badge-gold { background: rgba(200, 160, 70, 0.24); color: #f0d48e; border-color: rgba(240, 212, 142, 0.4); }
+html[data-amara-theme="oscuro"] .alert-info { background: rgba(90, 150, 220, 0.16); color: var(--ink); border-color: rgba(169, 205, 245, 0.35); }
+html[data-amara-theme="oscuro"] .alert-warn { background: rgba(230, 170, 50, 0.16); color: var(--ink); border-color: rgba(243, 207, 124, 0.35); }
+html[data-amara-theme="oscuro"] .alert-error { background: rgba(220, 80, 75, 0.18); color: var(--ink); border-color: rgba(255, 179, 174, 0.35); }
+html[data-amara-theme="oscuro"] .alert-ok { background: rgba(70, 170, 120, 0.16); color: var(--ink); border-color: rgba(155, 227, 188, 0.35); }
+html[data-amara-theme="oscuro"] .cell-esperado { box-shadow: inset 3px 0 0 #a9cdf5; background: rgba(90, 150, 220, 0.10); }
+html[data-amara-theme="oscuro"] .cell-contado { box-shadow: inset 3px 0 0 #c9a8f0; background: rgba(160, 110, 220, 0.12); }
+html[data-amara-theme="oscuro"] .th-esperado { color: #a9cdf5 !important; }
+html[data-amara-theme="oscuro"] .th-contado { color: #c9a8f0 !important; }
+html[data-amara-theme="oscuro"] .pos { color: #9be3bc; }
+html[data-amara-theme="oscuro"] .neg { color: #ff9b95; }

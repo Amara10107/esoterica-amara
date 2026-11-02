@@ -12,7 +12,7 @@ import { col, getDb } from '../db.ts';
 import { ah, HttpError, out, parse } from '../http.ts';
 import { publicUser } from '../serialize.ts';
 import { auditView, normalizeEntityFilter } from '../audit-view.ts';
-import { nextTerminalCode, terminalName, terminalPublic } from '../terminals.ts';
+import { nextTerminalCode, terminalBranchIds, terminalName, terminalPublic } from '../terminals.ts';
 import { compact, dayRangeIso, dayStr, isoRangeFilter, pageQuery, runMw, sessionUser } from '../util.ts';
 
 export const adminRouter = Router();
@@ -171,7 +171,7 @@ adminRouter.get(
   requirePerm('sucursales.gestionar'),
   ah(async (req, res) => {
     const me = sessionUser(req);
-    const items = await col('terminals').find({ branchId: { $in: me.branchIds } }).sort({ code: 1 }).toArray();
+    const items = await col('terminals').find({ deletedAt: null, $or: [{ branchId: { $in: me.branchIds } }, { branchIds: { $in: me.branchIds } }] }).sort({ code: 1 }).toArray();
     res.json({ items: items.map(terminalView) });
   }),
 );
@@ -182,8 +182,11 @@ adminRouter.post(
   ah(async (req, res) => {
     const me = sessionUser(req);
     const body = parse(terminalSchema, req.body);
-    assertBranch(me, body.branchId);
-    if (!(await col('branches').findOne({ _id: body.branchId }, { projection: { _id: 1 } }))) throw new HttpError(400, 'La sucursal no existe');
+    const allBranches = [...new Set([body.branchId, ...(body.branchIds ?? [])])];
+    for (const b of allBranches) {
+      assertBranch(me, b);
+      if (!(await col('branches').findOne({ _id: b }, { projection: { _id: 1 } }))) throw new HttpError(400, 'La sucursal no existe');
+    }
     // v2: sin código, el servidor toma el siguiente libre (P1, P2… / M1, M2…); sin nombre, lo arma con el tipo y la persona.
     let code = body.code;
     if (!code) {
@@ -197,13 +200,13 @@ adminRouter.post(
     const now = new Date().toISOString();
     try {
       await col('terminals').insertOne({
-        _id: id, id, code, name, branchId: body.branchId, kind: body.kind, assignedTo: body.assignedTo ?? null,
+        _id: id, id, code, name, branchId: body.branchId, branchIds: allBranches, kind: body.kind, assignedTo: body.assignedTo ?? null,
         revoked: false, tokenVersion: 0, lastSyncAt: null, createdAt: now, updatedAt: now,
       });
     } catch (e) {
       throw dupMsg(e, 'Ya existe una terminal con ese código');
     }
-    await audit({ userId: me.id, action: 'terminal.crear', entity: 'terminal', entityId: id, branchId: body.branchId, detail: { code, name, kind: body.kind, assignedTo: body.assignedTo ?? null } });
+    await audit({ userId: me.id, action: 'terminal.crear', entity: 'terminal', entityId: id, branchId: body.branchId, detail: { code, name, kind: body.kind, assignedTo: body.assignedTo ?? null, branchIds: allBranches } });
     const view = terminalView((await col('terminals').findOne({ _id: id }))!);
     // El terminal completo en la raíz (contrato v2) y también dentro de `terminal` (forma v1).
     res.status(201).json({ ...view, terminal: view });
@@ -214,7 +217,7 @@ async function loadTerminal(req: Request) {
   const me = sessionUser(req);
   const t = await col('terminals').findOne({ _id: req.params.id! });
   if (!t) throw new HttpError(404, 'Terminal no encontrada');
-  assertBranch(me, t.branchId);
+  if (!terminalBranchIds(t as any).some((b) => me.branchIds.includes(b))) assertBranch(me, t.branchId);
   return { me, t };
 }
 
@@ -223,8 +226,19 @@ adminRouter.patch(
   requirePerm('sucursales.gestionar'),
   ah(async (req, res) => {
     const { me, t } = await loadTerminal(req);
-    const patch = parse(z.object({ name: z.string().trim().min(2).max(60).optional(), kind: z.enum(['escritorio', 'movil']).optional(), assignedTo: z.string().trim().min(1).max(80).optional() }), req.body);
-    const set: Record<string, unknown> = compact({ ...patch });
+    const patch = parse(z.object({ name: z.string().trim().min(2).max(60).optional(), kind: z.enum(['escritorio', 'movil']).optional(), assignedTo: z.string().trim().min(1).max(80).optional(), branchIds: z.array(z.string().min(1)).min(1).max(10).optional() }), req.body);
+    const { branchIds: newBranches, ...rest } = patch;
+    const set: Record<string, unknown> = compact({ ...rest });
+    if (newBranches) {
+      const list = [...new Set(newBranches)];
+      for (const b of list) {
+        assertBranch(me, b);
+        if (!(await col('branches').findOne({ _id: b }, { projection: { _id: 1 } }))) throw new HttpError(400, 'La sucursal no existe');
+      }
+      set.branchIds = list;
+      // La sucursal principal debe seguir siendo una de las autorizadas.
+      if (!list.includes(t.branchId)) set.branchId = list[0]!;
+    }
     if (Object.keys(set).length === 0) return void res.json({ ...terminalView(t), terminal: terminalView(t), unchanged: true });
     set.updatedAt = new Date().toISOString();
     await col('terminals').updateOne({ _id: t._id }, { $set: set });
@@ -260,6 +274,34 @@ adminRouter.post(
   }),
 );
 
+/**
+ * Eliminar terminal (v2.1). Pide contraseña. Si la terminal NUNCA se usó, se borra. Si ya tiene ventas, cajas o
+ * sincronizaciones, se ARCHIVA (se oculta y queda desconectada) para no romper los tickets y cortes que la mencionan.
+ * Con la caja abierta no se puede: primero hay que cerrarla.
+ */
+adminRouter.delete(
+  '/terminals/:id',
+  requirePerm('sucursales.gestionar'),
+  requireReauth,
+  ah(async (req, res) => {
+    const { me, t } = await loadTerminal(req);
+    if (await col('cash_sessions').findOne({ terminalId: t._id, status: 'abierta' }, { projection: { _id: 1 } })) {
+      throw new HttpError(409, 'Esa terminal tiene la caja abierta. Ciérrala primero.');
+    }
+    const used =
+      (await col('sales').findOne({ terminalId: t._id }, { projection: { _id: 1 } })) ||
+      (await col('cash_sessions').findOne({ terminalId: t._id }, { projection: { _id: 1 } })) ||
+      (await col('sync_events').findOne({ terminalId: t._id }, { projection: { _id: 1 } }));
+    if (used) {
+      await col('terminals').updateOne({ _id: t._id }, { $set: { deletedAt: new Date().toISOString(), revoked: true, revokedAt: new Date().toISOString() }, $inc: { tokenVersion: 1 } });
+    } else {
+      await col('terminals').deleteOne({ _id: t._id });
+    }
+    await audit({ userId: me.id, action: 'terminal.eliminar', entity: 'terminal', entityId: t._id, branchId: t.branchId, detail: { code: t.code, archived: !!used } });
+    res.json({ ok: true, deleted: !used, archived: !!used });
+  }),
+);
+
 // ───────────────────────────── Permisos temporales ─────────────────────────────
 
 adminRouter.get(
@@ -267,8 +309,10 @@ adminRouter.get(
   requirePerm('permisos_temporales.gestionar'),
   ah(async (req, res) => {
     const me = sessionUser(req);
-    const q = parse(z.object({ branchId: z.string().optional(), active: z.enum(['1', '0']).optional() }).merge(pageQuery(100, 500)), req.query);
+    const q = parse(z.object({ branchId: z.string().optional(), active: z.enum(['1', '0']).optional(), hidden: z.enum(['1', '0']).optional() }).merge(pageQuery(100, 500)), req.query);
     const filter: Record<string, unknown> = { branchId: { $in: branchScope(me, q.branchId) } };
+    // v2.4.5: los borrados (hidden) solo salen en el historial.
+    filter.hidden = q.hidden === '1' ? true : { $ne: true };
     const now = new Date().toISOString();
     if (q.active === '1') Object.assign(filter, { revokedAt: null, startsAt: { $lte: now }, expiresAt: { $gt: now } });
     const grants = await col('grants').find(filter).sort({ startsAt: -1 }).skip(q.offset).limit(q.limit).toArray();
@@ -312,6 +356,27 @@ adminRouter.post(
     await col('grants').updateOne({ _id: g._id, revokedAt: null }, { $set: { revokedAt: now, revokedBy: me.id } });
     await audit({ userId: me.id, action: 'permiso_temporal.revocar', entity: 'grant', entityId: g._id, branchId: g.branchId, detail: { sellerId: g.sellerId } });
     res.json({ ok: true, grant: out(await col('grants').findOne({ _id: g._id })) });
+  }),
+);
+
+/**
+ * v2.4.5. Borrar = mandar al historial (no se elimina de la base). Solo permisos que ya no sirven (vencidos o revocados):
+ * uno vigente primero se revoca. `hidden:false` lo regresa a la lista.
+ */
+adminRouter.post(
+  '/grants/:id/hide',
+  requirePerm('permisos_temporales.gestionar'),
+  ah(async (req, res) => {
+    const me = sessionUser(req);
+    const body = parse(z.object({ hidden: z.boolean().default(true) }), req.body ?? {});
+    const g = await col('grants').findOne({ _id: req.params.id! });
+    if (!g) throw new HttpError(404, 'Permiso no encontrado');
+    assertBranch(me, g.branchId);
+    const now = new Date().toISOString();
+    if (body.hidden && !g.revokedAt && g.expiresAt > now) throw new HttpError(409, 'Ese permiso sigue vigente. Primero revócalo y después podrás borrarlo.');
+    await col('grants').updateOne({ _id: g._id }, { $set: body.hidden ? { hidden: true, hiddenAt: now, hiddenBy: me.id } : { hidden: false } });
+    await audit({ userId: me.id, action: body.hidden ? 'permiso_temporal.borrar' : 'permiso_temporal.restaurar', entity: 'grant', entityId: g._id, branchId: g.branchId, detail: { sellerId: g.sellerId } });
+    res.json({ ok: true });
   }),
 );
 

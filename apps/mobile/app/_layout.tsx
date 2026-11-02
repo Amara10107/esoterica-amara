@@ -11,7 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from '../src/state/AppContext';
 import { AlertsProvider } from '../src/state/AlertsContext';
 import { CartProvider } from '../src/state/CartContext';
-import { LOGO_ASPECT, colors, space } from '../src/theme';
+import { colors, space } from '../src/theme';
 
 function Gate() {
   const { phase, session } = useApp();
@@ -82,8 +82,8 @@ export default function RootLayout() {
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: colors.bg },
-              headerTintColor: colors.text,
-              headerTitleStyle: { fontWeight: '800' },
+              headerTintColor: colors.purple,
+              headerTitleStyle: { fontWeight: '800', color: colors.purple },
               headerShadowVisible: false,
               contentStyle: { backgroundColor: colors.bg },
               headerBackTitle: 'Atrás',
@@ -110,8 +110,20 @@ export default function RootLayout() {
             <Stack.Screen name="cash" options={{ title: 'Caja' }} />
             <Stack.Screen name="adjust" options={{ title: 'Devolución o cancelación' }} />
             <Stack.Screen name="tokens" options={{ title: 'Tokens de seguridad' }} />
+            <Stack.Screen name="terminals" options={{ title: 'Terminales' }} />
             <Stack.Screen name="limpias" options={{ title: 'Limpias' }} />
-            <Stack.Screen name="extras" options={{ title: 'Extras' }} />
+            <Stack.Screen name="extras" options={{ title: 'Extras por tipo' }} />
+            <Stack.Screen name="product-edit" options={{ title: 'Editar producto' }} />
+            <Stack.Screen name="theme" options={{ title: 'Apariencia' }} />
+            <Stack.Screen name="admin-users" options={{ title: 'Usuarios' }} />
+            <Stack.Screen name="admin-branches" options={{ title: 'Sucursales' }} />
+            <Stack.Screen name="admin-grants" options={{ title: 'Permisos temporales' }} />
+            <Stack.Screen name="admin-cuts" options={{ title: 'Cortes de caja' }} />
+            <Stack.Screen name="admin-period" options={{ title: 'Corte por periodo' }} />
+            <Stack.Screen name="advances" options={{ title: 'Anticipos de limpias' }} />
+            <Stack.Screen name="advance-new" options={{ title: 'Anticipo de limpia' }} />
+            <Stack.Screen name="admin-audit" options={{ title: 'Auditoría' }} />
+            <Stack.Screen name="admin-system" options={{ title: 'Sistema' }} />
             <Stack.Screen name="labels" options={{ title: 'Etiquetas' }} />
             <Stack.Screen name="product-sales" options={{ title: 'Ventas del producto' }} />
           </Stack>
@@ -125,7 +137,7 @@ export default function RootLayout() {
 
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', gap: space.xl, padding: space.xl },
-  logo: { width: 220, aspectRatio: LOGO_ASPECT },
+  logo: { width: 80, height: 80 },
   errorBox: { gap: space.sm },
   errorTitle: { fontSize: 18, fontWeight: '800', color: colors.danger, textAlign: 'center' },
   errorText: { fontSize: 14, color: colors.text, textAlign: 'center' },

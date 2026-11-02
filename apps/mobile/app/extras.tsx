@@ -1,51 +1,49 @@
 /**
- * Extras (SOLO administrador): categorías de producto que muestran el botón "Extra" al cobrar.
- * Se leen y guardan en el servidor (GET/PUT /settings/extra-categories); el teléfono las recibe al sincronizar.
- * Las opciones salen del catálogo local; las que ya estén guardadas se muestran aunque ninguna variante las use hoy.
+ * Extras por tipo de producto (SOLO administrador). Muestra todos los tipos que hay en el inventario de este teléfono
+ * (vela, pulsera, imagen...) y, dentro de cada uno, sus extras con precio. El vendedor solo ELIGE el extra al cobrar;
+ * no puede cambiar el precio. Se guarda en el servidor (PUT /settings/extras) y los demás aparatos lo reciben al sincronizar.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { sanitizeExtraCategories } from '@amara/shared';
-import { Banner, Button, Card, Chip, ChipRow, H1, H2, Loading, Muted, Screen } from '../src/components/ui';
-import { distinctCategories, isSelectedCategory, parseExtraCategories, toggleCategory } from '../src/lib/misc-v2';
+import { formatMXN, newId, sanitizeExtraCatalog, typeKey, uniqueTypes } from '@amara/shared';
+import type { ExtraOption } from '@amara/shared';
+import { Banner, Button, Card, Chip, ChipRow, Field, H1, H2, Loading, Muted, Row, Screen } from '../src/components/ui';
+import { parseMoneyInput } from '../src/lib/money-input';
 import { useApp } from '../src/state/AppContext';
 
 export default function Extras() {
   const app = useApp();
-  const { store, device, session, online, api } = app;
-  const [selected, setSelected] = useState<string[]>([]);
-  const [catalog, setCatalog] = useState<string[]>([]);
+  const { store, session, online, api } = app;
+  const [saved, setSaved] = useState<ExtraOption[]>([]);
+  const [items, setItems] = useState<ExtraOption[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, { name: string; price: string }>>({});
   const [loaded, setLoaded] = useState(false);
-  const [fromServer, setFromServer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error' | 'warn'; text: string } | null>(null);
-  const canUse = online && !!session?.token;
+  const canSave = online && !!session?.token;
 
   const load = useCallback(async () => {
-    if (!store || !device) return;
-    try {
-      const hits = await store.inventoryList({ branchId: device.branchId, limit: 5000 });
-      setCatalog(hits.map((h) => h.category));
-    } catch {
-      setCatalog([]);
-    }
-    let cats: string[] | null = null;
-    if (canUse) {
+    if (!store) return;
+    let list: ExtraOption[] = await store.getExtraCatalog();
+    let ts: string[] = await store.listProductTypes();
+    if (canSave) {
       try {
-        cats = parseExtraCategories(await api.get<unknown>('/settings/extra-categories'));
-        if (cats) setFromServer(true);
+        const [e, t] = await Promise.all([api.get<{ items?: unknown }>('/settings/extras'), api.get<{ types?: string[] }>('/settings/product-types')]);
+        list = sanitizeExtraCatalog(e.items);
+        ts = uniqueTypes([...ts, ...(t.types ?? [])]);
+        setMsg(null);
       } catch {
-        cats = null;
+        setMsg({ kind: 'warn', text: 'No se pudo leer del servidor: se muestran los extras guardados en el teléfono.' });
       }
+    } else {
+      setMsg({ kind: 'warn', text: 'Sin conexión: se muestran los extras guardados en el teléfono. Para cambiarlos se necesita internet.' });
     }
-    if (!cats) {
-      cats = await store.getExtraCategories();
-      setFromServer(false);
-      setMsg({ kind: 'warn', text: canUse ? 'No se pudo leer del servidor: se muestran las categorías guardadas en el teléfono.' : 'Sin conexión: se muestran las categorías guardadas en el teléfono. Para cambiarlas se necesita internet.' });
-    }
-    setSelected(cats);
+    setSaved(list);
+    setItems(list);
+    setTypes(ts);
     setLoaded(true);
-  }, [store, device, canUse, api]);
+  }, [store, canSave, api]);
 
   useFocusEffect(
     useCallback(() => {
@@ -53,20 +51,34 @@ export default function Extras() {
     }, [load]),
   );
 
+  const allTypes = useMemo(() => uniqueTypes([...types, ...items.map((i) => i.type)]), [types, items]);
+  const dirty = JSON.stringify(items) !== JSON.stringify(saved);
+
   if (!session || !store) return <Loading />;
-  if (!app.can('config.editar')) return <Screen><Banner kind="error" text="Solo el administrador puede elegir las categorías de Extras." /></Screen>;
+  if (!app.can('config.editar')) return <Screen><Banner kind="error" text="Solo el administrador puede configurar los extras." /></Screen>;
   if (!loaded) return <Loading />;
 
-  const options = distinctCategories([...catalog, ...selected]);
+  const patch = (id: string, change: Partial<ExtraOption>) => setItems((cur) => cur.map((i) => (i.id === id ? { ...i, ...change } : i)));
+
+  function add(type: string) {
+    const d = drafts[type] ?? { name: '', price: '' };
+    const cents = parseMoneyInput(d.price);
+    if (!d.name.trim() || cents === null) return setMsg({ kind: 'error', text: 'Escribe el nombre y el precio del extra.' });
+    setItems((cur) => [...cur, { id: newId(), type, name: d.name.trim(), priceCents: cents, active: true }]);
+    setDrafts((cur) => ({ ...cur, [type]: { name: '', price: '' } }));
+    setMsg(null);
+  }
 
   async function save() {
     setBusy(true);
     setMsg(null);
     try {
-      const res = await api.put<unknown>('/settings/extra-categories', { categories: sanitizeExtraCategories(selected) });
-      const saved = parseExtraCategories(res);
-      if (saved) setSelected(saved);
-      setMsg({ kind: 'ok', text: 'Guardado. Los teléfonos lo recibirán al sincronizar.' });
+      const res = await api.put<{ items?: unknown }>('/settings/extras', { items });
+      const confirmed = sanitizeExtraCatalog(res.items ?? items);
+      await store!.setExtraCatalogLocal(confirmed);
+      setSaved(confirmed);
+      setItems(confirmed);
+      setMsg({ kind: 'ok', text: 'Guardado. Los demás aparatos lo reciben al sincronizar.' });
       void app.syncNow('manual');
     } catch (e) {
       setMsg({ kind: 'error', text: e instanceof Error ? e.message : 'No se pudo guardar.' });
@@ -77,19 +89,43 @@ export default function Extras() {
 
   return (
     <Screen>
-      <H1>Extras</H1>
-      <Muted>Los productos de las categorías marcadas muestran el botón "Extra" al cobrar (monto y nota).</Muted>
-      <Card>
-        <H2>Categorías con Extra</H2>
-        {options.length === 0 ? <Muted>No hay categorías en el catálogo de este teléfono.</Muted> : null}
-        <ChipRow>
-          {options.map((c) => (
-            <Chip key={c} label={c} selected={isSelectedCategory(selected, c)} onPress={() => setSelected(toggleCategory(selected, c))} />
-          ))}
-        </ChipRow>
-      </Card>
+      <H1>Extras por tipo</H1>
+      <Muted>Aquí salen todos los tipos del inventario. A cada tipo le asignas sus extras y su precio. El vendedor solo elige el extra; no puede cambiar el precio.</Muted>
       {msg ? <Banner kind={msg.kind} text={msg.text} /> : null}
-      <Button title="Guardar" onPress={() => void save()} loading={busy} disabled={!canUse || !fromServer} />
+      {allTypes.length === 0 ? <Muted>Todavía no hay productos con tipo en el inventario.</Muted> : null}
+      {allTypes.map((type) => {
+        const mine = items.filter((i) => typeKey(i.type) === typeKey(type));
+        const d = drafts[type] ?? { name: '', price: '' };
+        return (
+          <Card key={type}>
+            <H2>{type}</H2>
+            {mine.length === 0 ? <Muted>Sin extras todavía.</Muted> : null}
+            {mine.map((i) => (
+              <Card key={i.id} tone="gold">
+                <Field label="Nombre" value={i.name} onChangeText={(t) => patch(i.id, { name: t })} maxLength={60} />
+                <Field
+                  label="Precio ($)"
+                  defaultValue={(i.priceCents / 100).toFixed(2)}
+                  keyboardType="decimal-pad"
+                  onEndEditing={(e) => {
+                    const c = parseMoneyInput(e.nativeEvent.text);
+                    if (c !== null) patch(i.id, { priceCents: c });
+                  }}
+                />
+                <Row label="Se cobra" value={formatMXN(i.priceCents)} />
+                <ChipRow>
+                  <Chip label={i.active ? 'Activo' : 'Desactivado'} selected={i.active} onPress={() => patch(i.id, { active: !i.active })} />
+                </ChipRow>
+                <Button title="Quitar" variant="danger" onPress={() => setItems((cur) => cur.filter((x) => x.id !== i.id))} />
+              </Card>
+            ))}
+            <Field label="Nuevo extra" value={d.name} onChangeText={(t) => setDrafts((cur) => ({ ...cur, [type]: { ...d, name: t } }))} placeholder="Ej. Aceite aromático" maxLength={60} />
+            <Field label="Precio ($)" value={d.price} onChangeText={(t) => setDrafts((cur) => ({ ...cur, [type]: { ...d, price: t } }))} keyboardType="decimal-pad" placeholder="0.00" />
+            <Button title="Agregar extra" variant="secondary" onPress={() => add(type)} />
+          </Card>
+        );
+      })}
+      <Button title="Guardar extras" onPress={() => void save()} loading={busy} disabled={!canSave || !dirty} />
     </Screen>
   );
 }

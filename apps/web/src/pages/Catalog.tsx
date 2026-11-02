@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, asList, listTotal } from '../lib/api.ts';
 import { errorMessage, useAsync, useDebounced } from '../lib/hooks.ts';
 import { formatMXN } from '../lib/format.ts';
 import type { CatalogProduct, CatalogVariant, InventoryRow } from '../lib/types.ts';
 import { Badge, Card, ConfirmDialog, Empty, ErrorBox, Modal, PageHeader, Spinner, TableWrap } from '../components/ui.tsx';
 import { Thumb } from '../components/common.tsx';
-import { ProductCreateModal, ProductEditModal, VariantEditModal } from '../components/ProductForms.tsx';
+import { ProductCreateModal, ProductEditModal, VariantAddModal, VariantEditModal } from '../components/ProductForms.tsx';
 import { useAuth, useToast } from '../context.tsx';
 
 const PAGE_SIZE = 50;
@@ -17,15 +17,18 @@ export function Catalog() {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
-  const [status, setStatus] = useState<'activo' | 'archivado' | ''>('activo');
+  const [params] = useSearchParams();
+  const [status, setStatus] = useState<'activo' | 'archivado' | 'borrado' | ''>(params.get('estado') === 'borrado' ? 'borrado' : 'activo');
   const [offset, setOffset] = useState(0);
   const dq = useDebounced(q.trim(), 300);
 
   const [creating, setCreating] = useState(false);
+  const [variantFor, setVariantFor] = useState<{ product?: CatalogProduct | null; barcode?: string } | null>(null);
   const [editing, setEditing] = useState<CatalogProduct | null>(null);
   const [variantsOf, setVariantsOf] = useState<CatalogProduct | null>(null);
   const [editVariant, setEditVariant] = useState<{ p: CatalogProduct; v: CatalogVariant } | null>(null);
   const [toggling, setToggling] = useState<CatalogProduct | null>(null);
+  const [deleting, setDeleting] = useState<CatalogProduct | null>(null);
   const [busy, setBusy] = useState(false);
 
   const res = useAsync(
@@ -55,9 +58,24 @@ export function Catalog() {
     if (!toggling) return;
     setBusy(true);
     try {
-      await api.post(`/catalog/products/${toggling.id}/${toggling.archived ? 'restore' : 'archive'}`, {});
-      notify(toggling.archived ? 'Producto restaurado.' : 'Producto archivado (no se borra).');
+      await api.post(`/catalog/products/${toggling.id}/${toggling.archived || toggling.deleted ? 'restore' : 'archive'}`, {});
+      notify(toggling.archived || toggling.deleted ? 'Producto restaurado.' : 'Producto archivado (no se borra).');
       setToggling(null);
+      res.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await api.post(`/catalog/products/${deleting.id}/delete`, {});
+      notify('Producto borrado. Quedó en el historial de borrados (Catálogo → Estado → Borrados) por si necesitas restaurarlo.');
+      setDeleting(null);
       res.reload();
     } catch (e) {
       notify(errorMessage(e), 'error');
@@ -77,12 +95,17 @@ export function Catalog() {
     <>
       <PageHeader
         title="Catálogo y variantes"
-        subtitle="Productos, presentaciones, precios y códigos. Archivar no borra: el historial de ventas conserva la copia original."
+        subtitle="Productos, presentaciones, precios y códigos. Archivar y Borrar no pierden nada: el historial de ventas conserva la copia original y lo borrado se puede restaurar."
         actions={
           canEdit && (
-            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-              Nuevo producto
-            </button>
+            <>
+              <button type="button" className="btn" onClick={() => setVariantFor({})}>
+                Agregar como variante
+              </button>{' '}
+              <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+                Nuevo producto
+              </button>
+            </>
           )
         }
       />
@@ -105,7 +128,8 @@ export function Catalog() {
           <select value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setOffset(0); }}>
             <option value="activo">Activos</option>
             <option value="archivado">Archivados</option>
-            <option value="">Todos</option>
+            <option value="borrado">Historial de borrados</option>
+            <option value="">Todos (sin borrados)</option>
           </select>
         </label>
       </div>
@@ -145,15 +169,18 @@ export function Catalog() {
                           <div key={v.id} className="small">{v.label}: {formatMXN(v.priceCents)}</div>
                         ))}
                       </td>
-                      <td>{p.archived ? <Badge tone="muted">Archivado</Badge> : <Badge tone="ok">Activo</Badge>}</td>
+                      <td>{p.deleted ? <Badge tone="muted">Borrado</Badge> : p.archived ? <Badge tone="muted">Archivado</Badge> : <Badge tone="ok">Activo</Badge>}</td>
                       <td className="row-actions">
                         <button type="button" className="btn btn-sm" onClick={() => setVariantsOf(p)}>Variantes</button>
                         {canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing(p)}>Editar</button>}
                         <button type="button" className="btn btn-sm" onClick={() => navigate('/etiquetas', { state: { rows: toLabelRows(p) } })}>Etiquetas</button>
                         {canEdit && (
                           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setToggling(p)}>
-                            {p.archived ? 'Restaurar' : 'Archivar'}
+                            {p.archived || p.deleted ? 'Restaurar' : 'Archivar'}
                           </button>
+                        )}
+                        {canEdit && !p.deleted && (
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => setDeleting(p)}>Borrar</button>
                         )}
                       </td>
                     </tr>
@@ -170,7 +197,15 @@ export function Catalog() {
         </Card>
       )}
 
-      {creating && <ProductCreateModal categories={categories} onClose={() => setCreating(false)} onSaved={refresh} />}
+      {creating && (
+        <ProductCreateModal
+          categories={categories}
+          onClose={() => setCreating(false)}
+          onSaved={refresh}
+          onAsVariant={(barcode) => { setCreating(false); setVariantFor({ barcode }); }}
+        />
+      )}
+      {variantFor && <VariantAddModal product={variantFor.product} barcode={variantFor.barcode} onClose={() => setVariantFor(null)} onSaved={() => { setVariantFor(null); refresh(); }} />}
       {editing && <ProductEditModal product={editing} categories={categories} onClose={() => setEditing(null)} onSaved={refresh} />}
       {variantsOf && (
         <Modal title={`Variantes de ${variantsOf.name}`} size="lg" onClose={() => setVariantsOf(null)}>
@@ -196,15 +231,29 @@ export function Catalog() {
               </tbody>
             </table>
           </TableWrap>
-          <p className="muted small">Para sumar una presentación nueva a un producto existente, créala como variante al dar de alta el producto (ver docs/PENDIENTES-web.md).</p>
+          {canEdit && (
+            <button type="button" className="btn btn-sm" onClick={() => { const p = variantsOf; setVariantsOf(null); setVariantFor({ product: p }); }}>
+              Agregar otra variante (con su código de barras)
+            </button>
+          )}
         </Modal>
       )}
       {editVariant && <VariantEditModal product={editVariant.p} variant={editVariant.v} onClose={() => setEditVariant(null)} onSaved={refresh} />}
+      {deleting && (
+        <ConfirmDialog
+          title="Borrar producto"
+          message={`${deleting.name}: se quita de Catálogo, Inventario y de la caja. NO se pierde la información: las ventas, tickets y movimientos antiguos conservan su nombre, y el producto queda en el historial de borrados (Estado → Historial de borrados), donde puedes restaurarlo cuando quieras.`}
+          confirmLabel="Borrar"
+          busy={busy}
+          onCancel={() => setDeleting(null)}
+          onConfirm={doDelete}
+        />
+      )}
       {toggling && (
         <ConfirmDialog
-          title={toggling.archived ? 'Restaurar producto' : 'Archivar producto'}
-          message={toggling.archived ? `${toggling.name} volverá a estar disponible para venta.` : `${toggling.name} dejará de ofrecerse para venta. El historial y las existencias se conservan.`}
-          confirmLabel={toggling.archived ? 'Restaurar' : 'Archivar'}
+          title={toggling.archived || toggling.deleted ? 'Restaurar producto' : 'Archivar producto'}
+          message={toggling.archived || toggling.deleted ? `${toggling.name}: Restaurar hace que el producto vuelva a aparecer para vender (caja, escáner y búsquedas). Su historial y existencias no cambian.` : `${toggling.name}: Archivar NO borra nada: el producto y todo su historial de ventas se conservan y las existencias quedan tal cual. Lo que cambia es que deja de aparecer para vender (caja, escáner y búsquedas). Puedes restaurarlo cuando quieras desde la web: Inventario → Mostrar archivados → Restaurar.`}
+          confirmLabel={toggling.archived || toggling.deleted ? 'Restaurar' : 'Archivar'}
           busy={busy}
           onCancel={() => setToggling(null)}
           onConfirm={toggleArchive}

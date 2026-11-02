@@ -10,6 +10,7 @@
  * Android con limitaciones), la app sigue funcionando y solo se pierde el aviso del sistema.
  */
 import { Platform } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import type { AlertMessage } from '../lib/low-stock';
 
 export const ALERT_CHANNEL_ID = 'existencias-bajas';
@@ -20,6 +21,12 @@ let cached: NotificationsModule | null | undefined;
 
 function mod(): NotificationsModule | null {
   if (cached !== undefined) return cached;
+  // Expo Go (SDK 53+) ya no incluye las notificaciones de Android: solo CARGAR el módulo escribe un error rojo en pantalla.
+  // Por eso en Expo Go ni siquiera se carga; en la app instalada (APK / development build) funciona normal.
+  if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
+    cached = null;
+    return cached;
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     cached = require('expo-notifications') as NotificationsModule;

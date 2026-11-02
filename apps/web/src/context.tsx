@@ -18,6 +18,7 @@ import { clearSession, loadSession, saveSession } from './lib/session.ts';
 import { errorMessage } from './lib/hooks.ts';
 import type { Branch, LoginResponse, SessionUser } from './lib/types.ts';
 import { Alert, Field, Modal } from './components/ui.tsx';
+import { PasswordInput } from './components/PasswordInput.tsx';
 
 /* --------------------------------------------------------------------- Avisos */
 
@@ -148,7 +149,7 @@ function ReauthModal({ onDone, onCancel }: { onDone: (token: string) => void; on
       <form id="reauth-form" onSubmit={submit} className="form">
         <p className="prose">Esta acción es sensible. Vuelve a escribir tu contraseña para continuar; la confirmación dura 5 minutos.</p>
         <Field label="Contraseña" error={error}>
-          <input type="password" autoComplete="current-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+          <PasswordInput autoComplete="current-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
       </form>
     </Modal>

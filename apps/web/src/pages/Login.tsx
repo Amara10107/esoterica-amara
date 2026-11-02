@@ -5,6 +5,7 @@ import { ApiError } from '../lib/api.ts';
 import { errorMessage } from '../lib/hooks.ts';
 import { issuesToErrors, type FieldErrors } from '../lib/forms.ts';
 import { Alert, Field } from '../components/ui.tsx';
+import { PasswordInput } from '../components/PasswordInput.tsx';
 
 export function Login() {
   const { login } = useAuth();
@@ -37,7 +38,7 @@ export function Login() {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={submit} noValidate>
-        <img className="login-logo" src="/logo-amara.png" alt="Esotérica Amara" width={200} height={155} />
+        <img className="login-logo" src="/logo-amara.png" alt="Esotérica Amara" width={120} height={120} />
         <h1>Panel administrativo</h1>
         <p className="muted center">Acceso para gerencia</p>
         {formError && <Alert tone="error">{formError}</Alert>}
@@ -45,7 +46,7 @@ export function Login() {
           <input value={username} autoComplete="username" autoFocus onChange={(e) => setUsername(e.target.value)} />
         </Field>
         <Field label="Contraseña" error={errors.password}>
-          <input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} />
+          <PasswordInput value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} />
         </Field>
         <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
           {busy ? 'Entrando...' : 'Iniciar sesión'}

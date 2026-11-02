@@ -7,12 +7,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CatalogHit } from '@amara/database';
-import { DEFAULT_EXTRA_CATEGORIES, can, isExtraCategory } from '@amara/shared';
+import { can, extrasForType } from '@amara/shared';
+import type { ExtraOption } from '@amara/shared';
 import type { BranchRow, CashStatus, SellerRow } from '../../shared/ipc.ts';
 import { DocPreviewModal } from '../components/DocPreviewModal.tsx';
 import { ExtraModal } from '../components/ExtraModal.tsx';
 import { Banner } from '../components/Field.tsx';
-import { MovementModal, NewProductModal } from '../components/InventoryModals.tsx';
+import { AddVariantModal, MovementModal, NewProductModal } from '../components/InventoryModals.tsx';
 import type { InvPerms } from '../components/InventoryModals.tsx';
 import { SellerPickModal } from '../components/SellerPickModal.tsx';
 import { DiscountModal, PaymentModal, VariantChoiceModal } from '../components/SaleModals.tsx';
@@ -45,18 +46,22 @@ export function PosScreen() {
   const [pickSeller, setPickSeller] = useState(false);
   const [seller, setSeller] = useState<SellerRow | null>(null);
   const [payOpen, setPayOpen] = useState(false);
-  const [extraCategories, setExtraCategories] = useState<string[]>([...DEFAULT_EXTRA_CATEGORIES]);
+  const [extraCatalog, setExtraCatalog] = useState<ExtraOption[]>([]);
   const [extraFor, setExtraFor] = useState<string | null>(null);
   const [previewSaleId, setPreviewSaleId] = useState<{ id: string; auto: boolean; fresh: boolean } | null>(null);
   const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountTicket, setDiscountTicket] = useState<string | undefined>(undefined); // boleto del vendedor para el descuento
   const [cash, setCash] = useState<CashStatus | null>(null);
   const [perms, setPerms] = useState<InvPerms | null>(null);
   const [branches, setBranches] = useState<BranchRow[]>([]);
   const [defaultBranchId, setDefaultBranchId] = useState('');
   const [movement, setMovement] = useState<CatalogHit | null>(null);
   const [newProduct, setNewProduct] = useState<string | null>(null);
+  const [variantCode, setVariantCode] = useState<string | null>(null);
 
-  const canDiscount = !!user && can(user.role, 'ventas.descuento');
+  const isManager = !!user && can(user.role, 'ventas.descuento');
+  // v2.1: el vendedor también puede dar descuento, pero con contraseña de admin o token 'descuento'.
+  const canDiscount = !!user && (isManager || user.role === 'vendedor');
 
   const showFlash = useCallback((f: Flash) => {
     setFlash(f);
@@ -71,7 +76,7 @@ export function PosScreen() {
   useEffect(() => {
     loadCash();
     call('inventory:permissions').then(setPerms).catch(() => undefined);
-    call('extras:get').then((r) => setExtraCategories(r.categories)).catch(() => undefined);
+    call('extrasCatalog:get').then((r) => setExtraCatalog(r.items)).catch(() => undefined);
     Promise.all([call('catalog:branches'), call('device:get')])
       .then(([b, d]) => {
         setBranches(b);
@@ -171,6 +176,7 @@ export function PosScreen() {
     setPayOpen(false);
     setSeller(null);
     pos.clearCart();
+    setDiscountTicket(undefined);
     loadCash();
     pos.setLastSale({ sale: r.sale, warnings: r.warnings });
     if (r.duplicate) {
@@ -204,7 +210,7 @@ export function PosScreen() {
         </div>
       </div>
 
-      {cash && !cash.open && <Banner kind="warn">La caja está cerrada. Para vender, un gerente debe abrir la caja en la pestaña Caja.</Banner>}
+      {cash && !cash.open && <Banner kind="warn">La caja está cerrada. Para vender, abre la caja en la pestaña Caja.</Banner>}
       {flash && <Banner kind={flash.kind} onClose={() => setFlash(null)}>{flash.text}</Banner>}
 
       <div className="pos-grid">
@@ -274,7 +280,7 @@ export function PosScreen() {
                           <td className="num strong">{money(l.qty * l.unitPriceCents)}</td>
                           <td className="num">
                             <div className="row-gap row-end">
-                              {isExtraCategory(l.category, extraCategories) && <button className="btn btn-sm" onClick={() => setExtraFor(l.key)}>Extra</button>}
+                              {extrasForType(extraCatalog, l.ptype).length > 0 && <button className="btn btn-sm" onClick={() => setExtraFor(l.key)}>Extra</button>}
                               <button className="btn btn-quiet btn-sm" onClick={() => pos.remove(l.key)}>Quitar</button>
                             </div>
                           </td>
@@ -311,6 +317,7 @@ export function PosScreen() {
               <button className="btn" disabled={pos.lines.length === 0} onClick={() => void clearCart()}>Vaciar</button>
             </div>
             {!canDiscount && <div className="muted small">Los descuentos los autoriza el gerente.</div>}
+            {canDiscount && !isManager && pos.discountCents > 0 && !discountTicket && <div className="muted small">Vuelve a autorizar el descuento antes de cobrar.</div>}
           </div>
 
           {last && (
@@ -350,6 +357,7 @@ export function PosScreen() {
           discountCents={pos.discountCents}
           lines={pos.lines}
           seller={seller}
+          ticket={pos.discountCents > 0 ? discountTicket : undefined}
           onClose={() => { setPayOpen(false); setSeller(null); }}
           onPaid={onPaid}
         />
@@ -357,9 +365,10 @@ export function PosScreen() {
       {extraFor && (
         <ExtraModal
           productName={pos.lines.find((l) => l.key === extraFor)?.productName ?? ''}
+          options={extrasForType(extraCatalog, pos.lines.find((l) => l.key === extraFor)?.ptype)}
           onClose={() => setExtraFor(null)}
-          onAdd={(cents, note) => {
-            const r = pos.addExtra(extraFor, cents, note);
+          onPick={(option) => {
+            const r = pos.addExtra(extraFor, option);
             if (!r.ok) return r.message;
             setExtraFor(null);
             return null;
@@ -380,7 +389,8 @@ export function PosScreen() {
           subtotalCents={pos.subtotalCents}
           currentCents={pos.discountCents}
           onClose={() => setDiscountOpen(false)}
-          onApply={(c) => { pos.setDiscountCents(c); setDiscountOpen(false); }}
+          needsAuth={!isManager}
+          onApply={(c, t) => { pos.setDiscountCents(c); setDiscountTicket(c > 0 ? t : undefined); setDiscountOpen(false); }}
         />
       )}
       {choices && (
@@ -411,7 +421,11 @@ export function PosScreen() {
           defaultBranchId={defaultBranchId}
           onClose={() => setNewProduct(null)}
           onCreated={() => setNewProduct(null)}
+          onAsVariant={(code) => { setNewProduct(null); setVariantCode(code); }}
         />
+      )}
+      {variantCode !== null && (
+        <AddVariantModal initialCode={variantCode} branches={branches} defaultBranchId={defaultBranchId} onClose={() => setVariantCode(null)} onDone={() => setVariantCode(null)} />
       )}
     </div>
   );

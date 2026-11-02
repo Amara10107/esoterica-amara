@@ -121,8 +121,41 @@ export const cashMovementPayload = z.object({
     concept: z.string().trim().min(3).max(200),
     userId: id,
     createdAt: isoDate,
+    // v2.3: entrada de efectivo que corresponde a un abono de anticipo de limpia.
+    advanceId: id.optional(),
   }),
+  // v2.3: quién autorizó un retiro/gasto hecho por un vendedor. Se valida aparte (`checkAuthorization`).
+  authorization: z.unknown().optional(),
 });
+
+const advanceSchema = z.object({
+  id,
+  code: z.string().regex(/^ANT-[A-Za-z0-9]{1,3}-\d{1,6}$/),
+  branchId: id,
+  terminalId: id,
+  clientName: z.string().trim().min(2).max(120),
+  clientPhone: z.string().max(30).nullish(),
+  concept: z.string().max(200),
+  createdBy: id,
+  createdByName: z.string().max(120),
+  createdAt: isoDate,
+});
+
+const advanceEntrySchema = z.object({
+  id,
+  advanceId: id,
+  kind: z.enum(['abono', 'uso', 'cierre', 'reapertura']),
+  amountCents: cents,
+  method: z.enum(['efectivo', 'tarjeta', 'transferencia']).nullish(),
+  note: z.string().max(300),
+  userId: id,
+  userName: z.string().max(120),
+  createdAt: isoDate,
+  cashSessionId: id.nullish(),
+});
+
+export const advanceCreatePayload = z.object({ advance: advanceSchema, entry: advanceEntrySchema });
+export const advanceEntryPayload = z.object({ entry: advanceEntrySchema });
 
 export const cashClosePayload = z.object({
   sessionId: id,

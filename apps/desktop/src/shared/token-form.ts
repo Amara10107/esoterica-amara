@@ -10,9 +10,13 @@ export const PURPOSE_LABEL: Record<TokenPurpose, string> = {
   devolucion: 'Devoluciones',
   cancelacion: 'Cancelaciones',
   limpias: 'Limpias',
+  escaner: 'Teléfono como escáner',
+  descuento: 'Descuentos',
+  apertura_caja: 'Apertura de caja (emergencia)',
+  retiro_caja: 'Retiros y gastos de caja',
 };
 
-export const ALL_PURPOSES: readonly TokenPurpose[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias'];
+export const ALL_PURPOSES: readonly TokenPurpose[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias', 'escaner', 'descuento', 'apertura_caja', 'retiro_caja'];
 
 export type DurationUnit = 'minutos' | 'horas';
 

@@ -140,5 +140,5 @@ export default function CodesScreen() {
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
-  qrBox: { padding: space.md, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border },
+  qrBox: { padding: space.md, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
 });

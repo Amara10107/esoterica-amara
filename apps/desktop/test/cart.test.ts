@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addExtra, addProduct, lineTitle, maxQty, pieceCount, removeLine, setQty, stockView, subtotalOf, toSaleItems, withServiceCharge } from '../src/renderer/lib/cart.ts';
+import { addCatalogExtra, addExtra, addProduct, lineTitle, maxQty, pieceCount, removeLine, setQty, stockView, subtotalOf, toSaleItems, withServiceCharge } from '../src/renderer/lib/cart.ts';
 import type { CartLine } from '../src/renderer/lib/cart.ts';
 
 const hit = (over: Partial<Parameters<typeof addProduct>[1]> = {}) => ({
@@ -109,5 +109,30 @@ describe('Limpia: cargo por el servicio', () => {
     expect(withFee![1]).toMatchObject({ kind: 'extra', extraNote: 'Servicio de limpia', unitPriceCents: 15000 });
     expect(withServiceCharge(r.lines, 0, 'svc')).toEqual(r.lines);
     expect(withServiceCharge([], 15000, 'svc')).toBeNull();
+  });
+});
+
+describe('extras del catálogo por tipo (v2.1)', () => {
+  const opt = (over: Partial<import('@amara/shared').ExtraOption> = {}) => ({ id: 'e1', type: 'Veladoras', name: 'Aceite aromático', priceCents: 2500, active: true, ...over });
+  const withType = () => {
+    const r = addProduct([], { ...hit(), type: 'Veladora' });
+    if (!r.ok) throw new Error();
+    return r.lines;
+  };
+  it('agrega el extra con el precio y nombre del catálogo, ligado al producto (singular/plural no importa)', () => {
+    const r = addCatalogExtra(withType(), 'p:v1', opt(), 'abc');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.lines[1]).toMatchObject({ kind: 'extra', unitPriceCents: 2500, extraNote: 'Aceite aromático', extraId: 'e1', parentKey: 'p:v1' });
+    expect(toSaleItems(r.lines)[1]).toEqual({ variantId: 'v1', qty: 1, kind: 'extra', unitPriceCents: 2500, extraNote: 'Aceite aromático', extraId: 'e1' });
+  });
+  it('varios extras distintos sí; el mismo dos veces, de otro tipo o desactivado no', () => {
+    const a = addCatalogExtra(withType(), 'p:v1', opt(), 'a');
+    if (!a.ok) throw new Error();
+    expect(addCatalogExtra(a.lines, 'p:v1', opt({ id: 'e2', name: 'Grabado', priceCents: 1000 }), 'b').ok).toBe(true);
+    expect(addCatalogExtra(a.lines, 'p:v1', opt(), 'c').ok).toBe(false);
+    expect(addCatalogExtra(withType(), 'p:v1', opt({ type: 'Pulseras' }), 'd').ok).toBe(false);
+    expect(addCatalogExtra(withType(), 'p:v1', opt({ active: false }), 'e').ok).toBe(false);
+    expect(addCatalogExtra(withType(), 'p:nope', opt(), 'f').ok).toBe(false);
   });
 });

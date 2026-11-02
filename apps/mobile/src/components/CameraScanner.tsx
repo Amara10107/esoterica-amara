@@ -20,8 +20,10 @@ export function CameraScanner(props: {
   paused?: boolean;
   barcodeTypes?: readonly ScanBarcodeType[];
   height?: number;
+  /** false = solo la cámara, sin el recuadro dorado del centro (vincular con la PC). */
+  showFrame?: boolean;
 }) {
-  const { onScan, paused = false, barcodeTypes = SCAN_BARCODE_TYPES, height = 280 } = props;
+  const { onScan, paused = false, barcodeTypes = SCAN_BARCODE_TYPES, height = 280, showFrame = true } = props;
   const [permission, requestPermission] = useCameraPermissions();
   const [torch, setTorch] = useState(false);
   const debouncer = useRef(new ScanDebouncer(1500));
@@ -59,9 +61,11 @@ export function CameraScanner(props: {
               }
         }
       />
-      <View pointerEvents="none" style={styles.frameWrap}>
-        <View style={styles.frame} />
-      </View>
+      {showFrame ? (
+        <View pointerEvents="none" style={styles.frameWrap}>
+          <View style={styles.frame} />
+        </View>
+      ) : null}
       <Pressable accessibilityRole="button" accessibilityLabel={torch ? 'Apagar linterna' : 'Encender linterna'} onPress={() => setTorch((t) => !t)} style={styles.torch}>
         <Text style={styles.torchText}>{torch ? 'Linterna: ON' : 'Linterna'}</Text>
       </Pressable>

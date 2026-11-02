@@ -7,6 +7,7 @@ import { ALL_PERMISSIONS, PERMISSION_LABEL, ROLE_NAME, roleHas } from '../lib/pe
 import type { AdminUser } from '../lib/types.ts';
 import { Alert, Badge, Card, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, TableWrap, Tabs, CloseButton } from '../components/ui.tsx';
 import { useAuth, useBranches, useToast } from '../context.tsx';
+import { PasswordInput } from '../components/PasswordInput.tsx';
 
 export function Users() {
   const { user: me, permissions } = useAuth();
@@ -171,10 +172,10 @@ function UserModal({ user, isSelf, onClose, onSaved }: { user: AdminUser | null;
         </div>
         <div className="grid-2">
           <Field label={user ? 'Nueva contraseña (opcional)' : 'Contraseña'} required={!user} hint="Mínimo 8 caracteres" error={errors.password}>
-            <input type="password" value={form.password} autoComplete="new-password" onChange={(e) => set({ password: e.target.value })} />
+            <PasswordInput value={form.password} autoComplete="new-password" onChange={(e) => set({ password: e.target.value })} />
           </Field>
           <Field label="Repite la contraseña" required={!user} error={errors.password2}>
-            <input type="password" value={form.password2} autoComplete="new-password" onChange={(e) => set({ password2: e.target.value })} />
+            <PasswordInput value={form.password2} autoComplete="new-password" onChange={(e) => set({ password2: e.target.value })} />
           </Field>
         </div>
         <fieldset className="fieldset">

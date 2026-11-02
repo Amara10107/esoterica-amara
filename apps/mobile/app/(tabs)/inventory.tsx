@@ -33,6 +33,7 @@ export default function Inventory() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CatalogHit | null>(null);
   const [moving, setMoving] = useState<CatalogHit | null>(null);
+  const [movingType, setMovingType] = useState<'entrada' | 'conteo'>('entrada');
   const [notice, setNotice] = useState<string | null>(null);
   const reqId = useRef(0);
 
@@ -141,6 +142,17 @@ export default function Inventory() {
                     }}
                   />
                 ) : null}
+                {app.can('productos.editar') && app.online ? (
+                  <Button
+                    title="Editar o archivar producto"
+                    variant="secondary"
+                    onPress={() => {
+                      const hit = selected;
+                      setSelected(null);
+                      router.push({ pathname: '/product-edit', params: { productId: hit.productId } });
+                    }}
+                  />
+                ) : null}
                 <Button
                   title="Ver códigos (QR y barras)"
                   variant="secondary"
@@ -150,11 +162,23 @@ export default function Inventory() {
                     router.push({ pathname: '/codes', params: { variantId: id } });
                   }}
                 />
-                {app.can('inventario.mover') || app.session?.user.role === 'vendedor' ? (
+                {app.can('inventario.mover') ? (
                   <Button
-                    title="Registrar movimiento"
+                    title="Editar existencia (contar y corregir)"
                     variant="dark"
                     onPress={() => {
+                      setMovingType('conteo');
+                      setMoving(selected);
+                      setSelected(null);
+                    }}
+                  />
+                ) : null}
+                {app.can('inventario.mover') || app.session?.user.role === 'vendedor' ? (
+                  <Button
+                    title="Registrar entrada, salida o ajuste"
+                    variant="dark"
+                    onPress={() => {
+                      setMovingType('entrada');
                       setMoving(selected);
                       setSelected(null);
                     }}
@@ -170,6 +194,7 @@ export default function Inventory() {
       <MovementModal
         visible={moving !== null}
         hit={moving}
+        initialType={movingType}
         onClose={() => setMoving(null)}
         onDone={(m) => {
           setMoving(null);
@@ -203,10 +228,10 @@ function ItemRow({ item, onPress }: { item: CatalogHit; onPress: () => void }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   top: { padding: space.lg, gap: space.sm },
-  search: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 16, color: colors.text, backgroundColor: colors.white },
+  search: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 16, color: colors.text, backgroundColor: colors.card },
   list: { paddingHorizontal: space.lg, paddingBottom: 32, gap: space.sm },
   empty: { textAlign: 'center', margin: 24 },
-  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   itemName: { fontSize: 16, fontWeight: '800', color: colors.text },
   itemSub: { fontSize: 14, color: colors.muted },
   qty: { minWidth: 64, alignItems: 'center', borderRadius: radius.sm, padding: space.sm, backgroundColor: colors.surface },
@@ -215,5 +240,5 @@ const styles = StyleSheet.create({
   qtyNum: { fontSize: 20, fontWeight: '900', color: colors.text },
   qtyLabel: { fontSize: 12, color: colors.muted, fontWeight: '700' },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
-  sheet: { backgroundColor: colors.white, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.lg, gap: space.sm },
+  sheet: { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: space.lg, gap: space.sm },
 });

@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import type { ReactNode } from 'react';
 import type { CatalogHit } from '@amara/database';
 import { newId } from '@amara/shared';
-import type { Sale } from '@amara/shared';
+import type { ExtraOption, Sale } from '@amara/shared';
 import * as cart from '../lib/cart.ts';
 import type { AddResult, CartLine, ExtraResult } from '../lib/cart.ts';
 
@@ -31,7 +31,7 @@ interface PosApi {
   /** Agrega una pieza. Si no hay existencia (o ya se agregó todo) NO agrega y explica por qué. */
   addHit: (h: CatalogHit) => AddResult;
   /** Agrega una línea Extra ligada a un producto del carrito. */
-  addExtra: (parentKey: string, amountCents: number, note: string) => ExtraResult;
+  addExtra: (parentKey: string, option: ExtraOption) => ExtraResult;
   setQty: (key: string, qty: number) => void;
   remove: (key: string) => void;
   clearCart: () => void;
@@ -74,8 +74,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return r;
   }, []);
 
-  const addExtra = useCallback((parentKey: string, amountCents: number, note: string): ExtraResult => {
-    const r = cart.addExtra(linesRef.current, parentKey, amountCents, note, newId());
+  const addExtra = useCallback((parentKey: string, option: ExtraOption): ExtraResult => {
+    const r = cart.addCatalogExtra(linesRef.current, parentKey, option, newId());
     if (r.ok) {
       linesRef.current = r.lines;
       setLines(r.lines);

@@ -1,7 +1,7 @@
 /** Construcción del PullPayload (catálogo incremental + existencias completas de las sucursales autorizadas). */
 import type { PullPayload } from '@amara/database';
 import { col } from './db.ts';
-import { getExtraCategories } from './settings.ts';
+import { getExtraCatalog, getExtraCategories, getTheme } from './settings.ts';
 
 /**
  * `verifiers`: incluye, solo de los GERENTES, el verificador de contraseña (el hash scrypt que ya existe en el servidor) para que el
@@ -13,7 +13,7 @@ export async function buildPullPayload(branchIds: string[], since?: string, opts
   const incremental = since ? { updatedAt: { $gte: since } } : {};
   const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString();
 
-  const [branches, products, variants, stock, users, grants, tokens, extraCategories] = await Promise.all([
+  const [branches, products, variants, stock, users, grants, tokens, extraCategories, extraCatalog, theme, advances] = await Promise.all([
     col('branches').find({ _id: { $in: branchIds } }).toArray(),
     col('products').find(incremental).toArray(),
     col('variants').find(incremental).toArray(),
@@ -27,7 +27,15 @@ export async function buildPullPayload(branchIds: string[], since?: string, opts
     // v2: tokens de las sucursales (y generales) vigentes o vencidos/revocados en las últimas 24 h. Solo sal + hash, nunca el código.
     col('security_tokens').find({ branchId: { $in: [...branchIds, null] }, expiresAt: { $gt: dayAgo } }).sort({ createdAt: -1 }).limit(500).toArray(),
     getExtraCategories(),
+    getExtraCatalog(),
+    getTheme(),
+    // v2.3: anticipos de limpias de las sucursales (los 600 más recientes) con todos sus movimientos.
+    col('advances').find({ branchId: { $in: branchIds } }).sort({ createdAt: -1 }).limit(600).toArray(),
   ]);
+  const advIds = advances.map((a) => a._id as unknown as string);
+  const advEntries = advIds.length ? await col('advance_entries').find({ advanceId: { $in: advIds } }).sort({ createdAt: 1 }).toArray() : [];
+  const entriesBy = new Map<string, typeof advEntries>();
+  for (const e of advEntries) entriesBy.set(e.advanceId, [...(entriesBy.get(e.advanceId) ?? []), e]);
 
   return {
     serverTime,
@@ -55,6 +63,14 @@ export async function buildPullPayload(branchIds: string[], since?: string, opts
       createdBy: t.createdBy, createdAt: t.createdAt, expiresAt: t.expiresAt, revokedAt: t.revokedAt ?? null, maxUses: t.maxUses ?? null,
       usedCount: Number(t.usedCount ?? 0), salt: t.salt, hash: t.hash,
     })),
-    settings: { extraCategories },
+    advances: advances.map((a) => ({
+      id: a._id as unknown as string, code: a.code, branchId: a.branchId, terminalId: a.terminalId, clientName: a.clientName, clientPhone: a.clientPhone ?? null,
+      concept: a.concept ?? '', createdBy: a.createdBy, createdByName: a.createdByName, createdAt: a.createdAt,
+      entries: (entriesBy.get(a._id as unknown as string) ?? []).map((e) => ({
+        id: e._id as unknown as string, advanceId: e.advanceId, kind: e.kind, amountCents: e.amountCents, method: e.method ?? null, note: e.note ?? '',
+        userId: e.userId, userName: e.userName, createdAt: e.createdAt, cashSessionId: e.cashSessionId ?? null,
+      })),
+    })),
+    settings: { extraCategories, extraCatalog, theme },
   };
 }

@@ -20,6 +20,9 @@ export function Grants() {
   const { notify } = useToast();
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<GrantRow | null>(null);
+  const [hiding, setHiding] = useState<GrantRow | null>(null);
+  // v2.4.5: lista actual o Historial (los borrados).
+  const [history, setHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => new Date().toISOString());
 
@@ -30,7 +33,7 @@ export function Grants() {
   }, []);
 
   const users = useAsync((s) => api.get<unknown>('/admin/users', undefined, s).then((d) => asList<AdminUser>(d)), []);
-  const res = useAsync((s) => api.get<unknown>('/admin/grants', undefined, s).then((d) => asList<GrantRow>(d)), []);
+  const res = useAsync((s) => api.get<unknown>('/admin/grants', { hidden: history ? '1' : '0' }, s).then((d) => asList<GrantRow>(d)), [history]);
   const nameOf = (id: string) => users.data?.find((u) => u.id === id)?.name ?? id.slice(0, 6);
 
   const revoke = async () => {
@@ -48,6 +51,20 @@ export function Grants() {
     }
   };
 
+  const setHidden = async (g: GrantRow, hidden: boolean) => {
+    setBusy(true);
+    try {
+      await api.post(`/admin/grants/${g.id}/hide`, { hidden });
+      notify(hidden ? 'Permiso borrado. Quedó en el Historial.' : 'Permiso restaurado.');
+      setHiding(null);
+      res.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const rows = [...(res.data ?? [])].sort((a, b) => b.startsAt.localeCompare(a.startsAt));
 
   return (
@@ -55,13 +72,18 @@ export function Grants() {
       <PageHeader
         title="Permisos temporales para vendedores"
         subtitle="Permiten a un vendedor registrar entradas de inventario en una sucursal durante un tiempo limitado. Nunca incluyen cortes de caja ni cambios de rol."
-        actions={<button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>Nuevo permiso</button>}
+        actions={
+          <>
+            <button type="button" className="btn" onClick={() => setHistory((h) => !h)}>{history ? 'Ver permisos actuales' : 'Historial (borrados)'}</button>{' '}
+            <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>Nuevo permiso</button>
+          </>
+        }
       />
       {res.loading && !res.data && <Spinner />}
       {res.error && <ErrorBox error={res.error} onRetry={res.reload} />}
       {res.data && (
         <Card>
-          {rows.length === 0 ? <Empty>No hay permisos temporales.</Empty> : (
+          {rows.length === 0 ? <Empty>{history ? 'El historial está vacío: no has borrado permisos.' : 'No hay permisos temporales.'}</Empty> : (
             <TableWrap>
               <table className="table">
                 <thead><tr><th>Vendedor</th><th>Sucursal</th><th>Función</th><th>Inicio</th><th>Vence</th><th>Estado</th><th>Otorgó</th><th /></tr></thead>
@@ -77,7 +99,15 @@ export function Grants() {
                         <td>{formatMxDateTime(g.expiresAt)}{st === 'vigente' && <div className="muted small">Quedan {formatDuration(minutesLeft(g.expiresAt, now))}</div>}</td>
                         <td><Badge tone={STATE_TONE[st]}>{STATE_LABEL[st]}</Badge>{g.revokedAt && <div className="muted small">{formatMxDateTime(g.revokedAt)}</div>}</td>
                         <td>{g.grantedByName ?? nameOf(g.grantedBy)}</td>
-                        <td className="row-actions">{(st === 'vigente' || st === 'programado') && <button type="button" className="btn btn-sm btn-danger" onClick={() => setRevoking(g)}>Revocar</button>}</td>
+                        <td className="row-actions">
+                          {history ? (
+                            <button type="button" className="btn btn-sm" onClick={() => void setHidden(g, false)} disabled={busy}>Restaurar</button>
+                          ) : st === 'vigente' || st === 'programado' ? (
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setRevoking(g)}>Revocar</button>
+                          ) : (
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setHiding(g)}>Borrar</button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -88,6 +118,17 @@ export function Grants() {
         </Card>
       )}
       {creating && <GrantModal sellers={(users.data ?? []).filter((u) => u.role === 'vendedor' && u.active)} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); res.reload(); }} />}
+      {hiding && (
+        <ConfirmDialog
+          title="Borrar permiso"
+          message={`El permiso de ${hiding.sellerName ?? nameOf(hiding.sellerId)} se quita de la lista y queda en el Historial (botón «Historial (borrados)»), donde puedes restaurarlo. No se pierde de la auditoría.`}
+          confirmLabel="Borrar"
+          danger
+          busy={busy}
+          onCancel={() => setHiding(null)}
+          onConfirm={() => void setHidden(hiding, true)}
+        />
+      )}
       {revoking && (
         <ConfirmDialog
           title="Revocar permiso"

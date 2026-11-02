@@ -5,6 +5,7 @@ import logoUrl from '../assets/logo-amara.png';
 import { errorCode, errorText } from '../lib/api.ts';
 import { Banner, Field } from '../components/Field.tsx';
 import { useApp } from '../state/AppState.tsx';
+import { PasswordInput } from '../components/PasswordInput.tsx';
 
 export function LoginScreen() {
   const { login, device, sync, info } = useApp();
@@ -45,7 +46,7 @@ export function LoginScreen() {
             <input className="inp inp-lg" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" spellCheck={false} />
           </Field>
           <Field label="Contraseña">
-            <input className="inp inp-lg" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            <PasswordInput className="inp inp-lg" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           </Field>
           {error && <Banner kind="error">{error}</Banner>}
           {firstTime && <Banner kind="info">La primera vez que entra un usuario en esta computadora hace falta internet. Después podrá entrar sin conexión.</Banner>}

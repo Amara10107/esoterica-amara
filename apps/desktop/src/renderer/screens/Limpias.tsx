@@ -63,6 +63,7 @@ function Builder({
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CatalogHit[]>([]);
   const [serviceText, setServiceText] = useState('');
+  const [discountText, setDiscountText] = useState('');
   const [pickSeller, setPickSeller] = useState(false);
   const [seller, setSeller] = useState<SellerRow | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -109,8 +110,14 @@ function Builder({
   const serviceOk = service === null || (!Number.isNaN(service) && service >= 0);
   const serviceCents = service === null || Number.isNaN(service) ? 0 : service;
   const articles = subtotalOf(lines);
-  const total = articles + serviceCents;
-  const canCharge = lines.length > 0 && serviceOk && total > 0;
+  const subtotal = articles + serviceCents;
+  // Descuento en Limpias: solo el administrador (el vendedor entra con autorización pero no descuenta).
+  const adminOnly = !ticket;
+  const disc = parsePesos(discountText);
+  const discountOk = disc === null || (!Number.isNaN(disc) && disc >= 0 && disc <= subtotal);
+  const discountCents = adminOnly && disc !== null && !Number.isNaN(disc) && disc <= subtotal ? disc : 0;
+  const total = subtotal - discountCents;
+  const canCharge = lines.length > 0 && serviceOk && discountOk && total > 0;
 
   // El cargo por el servicio es una línea 'extra' ligada al primer artículo (no mueve inventario).
   const finalLines = withServiceCharge(lines, serviceCents, serviceId.current);
@@ -119,6 +126,7 @@ function Builder({
     setSeller(null);
     setLines([]);
     setServiceText('');
+    setDiscountText('');
     serviceId.current = newId();
     if (r.duplicate) toast('info', `Esa limpia ya estaba guardada (folio ${r.sale.folio}). No se duplicó.`);
     else setPreviewId(r.sale.id);
@@ -177,21 +185,27 @@ function Builder({
           <Field label="Cargo por el servicio ($, opcional)" error={!serviceOk ? 'Escribe un importe válido' : null} hint="Se cobra aparte de los artículos">
             <input className="inp" inputMode="decimal" value={serviceText} onChange={(e) => setServiceText(e.target.value)} placeholder="0.00" disabled={lines.length === 0} />
           </Field>
+          {adminOnly && (
+            <Field label="Descuento ($, opcional)" error={!discountOk ? 'Escribe un importe válido, no mayor al subtotal' : null} hint="Solo el administrador puede dar descuento en Limpias">
+              <input className="inp" inputMode="decimal" value={discountText} onChange={(e) => setDiscountText(e.target.value)} placeholder="0.00" disabled={lines.length === 0} />
+            </Field>
+          )}
           <div className="totals-inline">
             <div className="row-between"><span>Artículos</span><span>{money(articles)}</span></div>
             <div className="row-between"><span>Servicio</span><span>{money(serviceCents)}</span></div>
+            {discountCents > 0 && <div className="row-between"><span>Descuento</span><span>-{money(discountCents)}</span></div>}
             <div className="total-big"><span>TOTAL</span><strong>{money(total)}</strong></div>
           </div>
         </div>
         <div className="row-gap">
           <button className="btn btn-gold btn-xl" disabled={!canCharge || !finalLines} onClick={() => setPickSeller(true)}>Cobrar limpia</button>
-          <button className="btn" disabled={lines.length === 0} onClick={() => { setLines([]); setServiceText(''); }}>Vaciar</button>
+          <button className="btn" disabled={lines.length === 0} onClick={() => { setLines([]); setServiceText(''); setDiscountText(''); }}>Vaciar</button>
         </div>
       </div>
 
       {pickSeller && <SellerPickModal onClose={() => setPickSeller(false)} onPick={(s) => { setPickSeller(false); setSeller(s); }} />}
       {seller && finalLines && (
-        <PaymentModal totalCents={total} discountCents={0} lines={finalLines} seller={seller} saleType="limpia" ticket={ticket} onClose={() => setSeller(null)} onPaid={onPaid} />
+        <PaymentModal totalCents={total} discountCents={discountCents} lines={finalLines} seller={seller} saleType="limpia" ticket={ticket} onClose={() => setSeller(null)} onPaid={onPaid} />
       )}
       {previewId && (
         <DocPreviewModal doc={{ kind: 'ticket', saleId: previewId }} title="Ticket de la limpia" intro="Limpia guardada. Revisa el ticket y pulsa Imprimir." onClose={() => setPreviewId(null)} />

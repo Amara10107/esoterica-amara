@@ -2,7 +2,7 @@
  * Etiquetas: Code128 (código interno) + QR (buildQrValue). Se arma un lote, se eligen qué mostrar (nombre, precio, QR),
  * se abre un MODAL de vista previa de la hoja con "Imprimir" y "Guardar PDF", y queda en el historial para reimprimir.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogHit } from '@amara/database';
 import type { LabelBatch, LabelItem } from '../../shared/ipc.ts';
 import { buildLabelSheetHtml, labelInnerHtml, labelRules } from '../../shared/label-html.ts';
@@ -34,6 +34,7 @@ export function LabelsScreen() {
   const [history, setHistory] = useState<LabelBatch[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const w = settings?.labelWidthMm ?? 50;
   const h = settings?.labelHeightMm ?? 30;
@@ -82,6 +83,13 @@ export function LabelsScreen() {
     };
   }, [items]);
 
+  /** Lleva el cursor a la búsqueda para seguir agregando productos al mismo lote. */
+  const focusSearch = () => {
+    searchRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    searchRef.current?.focus();
+  };
+  const bump = (id: string, d: number) => setItems((prev) => prev.map((i) => (i.variantId === id ? { ...i, copies: Math.max(1, Math.min(500, i.copies + d)) } : i)));
+
   const total = useMemo(() => items.reduce((a, i) => a + i.copies, 0), [items]);
   const setCopies = (id: string, v: string) => setItems((prev) => prev.map((i) => (i.variantId === id ? { ...i, copies: Math.max(1, Math.min(500, Math.floor(Number(v)) || 1)) } : i)));
 
@@ -119,11 +127,11 @@ export function LabelsScreen() {
       <h1>Etiquetas</h1>
       <p className="muted">Tamaño de etiqueta: {w} x {h} mm (se cambia en Ajustes). Cada etiqueta lleva código de barras Code128 y código QR.</p>
       <div className="searchbox">
-        <input className="inp inp-lg" placeholder="Busca un producto o escanéalo para agregarlo al lote" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input ref={searchRef} className="inp inp-lg" placeholder="Busca un producto o escanéalo para agregarlo al lote" value={query} onChange={(e) => setQuery(e.target.value)} />
         {results.length > 0 && (
           <div className="results">
             {results.map((r) => (
-              <button key={r.variantId} className="result" onClick={() => { add(r); setQuery(''); setResults([]); }}>
+              <button key={r.variantId} className="result" onClick={() => { add(r); setQuery(''); setResults([]); toast('ok', `Agregado: ${r.productName} - ${r.label}`); window.setTimeout(() => searchRef.current?.focus(), 0); }}>
                 <span><strong>{r.productName}</strong> - {r.label}</span>
                 <span className="muted">{r.internalCode}</span>
               </button>
@@ -158,7 +166,10 @@ export function LabelsScreen() {
                     <div><strong>{i.productName}</strong> - {i.label}</div>
                     <div className="muted small mono">{i.code} - {money(i.priceCents)}</div>
                     <div className="row-gap">
-                      <label className="field-inline">Copias <input className="inp inp-qty" inputMode="numeric" value={i.copies} onChange={(e) => setCopies(i.variantId, e.target.value)} /></label>
+                      <label className="field-inline">Copias</label>
+                      <button className="btn btn-sm" aria-label="Una copia menos" onClick={() => bump(i.variantId, -1)} disabled={i.copies <= 1}>-</button>
+                      <input className="inp inp-qty" inputMode="numeric" value={i.copies} onChange={(e) => setCopies(i.variantId, e.target.value)} />
+                      <button className="btn btn-sm" aria-label="Una copia más" onClick={() => bump(i.variantId, 1)}>+</button>
                       <button className="btn btn-quiet btn-sm" onClick={() => setItems((prev) => prev.filter((x) => x.variantId !== i.variantId))}>Quitar</button>
                     </div>
                   </div>
@@ -166,6 +177,7 @@ export function LabelsScreen() {
               ))}
             </div>
             <div className="row-gap">
+              <button className="btn btn-lg" onClick={focusSearch}>+ Agregar otro producto</button>
               <button className="btn btn-gold btn-lg" onClick={() => void openPreview(items)} disabled={busy}>{busy ? 'Preparando...' : `Vista previa e imprimir (${total})`}</button>
               <button className="btn" onClick={() => setItems([])} disabled={busy}>Vaciar lote</button>
             </div>
@@ -189,7 +201,7 @@ export function LabelsScreen() {
           </div>
         ))}
       </div>
-      {sheet && <LabelPreviewModal labels={sheet.labels} options={sheet.options} printHtml={sheet.html} onClose={() => setSheet(null)} onPrinted={() => void afterPrinted()} />}
+      {sheet && <LabelPreviewModal labels={sheet.labels} options={sheet.options} printHtml={sheet.html} onClose={() => setSheet(null)} onAddMore={() => { setSheet(null); window.setTimeout(focusSearch, 50); }} onPrinted={() => void afterPrinted()} />}
     </div>
   );
 }

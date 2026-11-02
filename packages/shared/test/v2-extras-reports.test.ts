@@ -53,6 +53,12 @@ test('extras: categorías por omisión y comparación sin mayúsculas ni acentos
   assert.equal(isExtraCategory(null), false);
   assert.equal(isExtraCategory('Inciensos', ['inciensos']), true);
   assert.equal(isExtraCategory('Velas', []), false);
+  // singular/plural y categorías con más palabras
+  assert.equal(isExtraCategory('Veladora'), true);
+  assert.equal(isExtraCategory('Imagen'), true);
+  assert.equal(isExtraCategory('Loción'), true);
+  assert.equal(isExtraCategory('Veladoras de santos'), true);
+  assert.equal(isExtraCategory('Velas'), false);
   assert.equal(normalizeCategory('  Pulseras   de  Cuarzo '), 'pulseras de cuarzo');
 });
 

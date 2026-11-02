@@ -8,7 +8,7 @@ import type { CatalogHit } from '@amara/database';
 import { can } from '@amara/shared';
 import type { BranchRow } from '../../shared/ipc.ts';
 import { Banner, Field } from '../components/Field.tsx';
-import { MovementModal, NewProductModal } from '../components/InventoryModals.tsx';
+import { AddVariantModal, EditProductModal, MovementModal, NewProductModal } from '../components/InventoryModals.tsx';
 import type { InvPerms } from '../components/InventoryModals.tsx';
 import { call, errorText } from '../lib/api.ts';
 import { stockView } from '../lib/cart.ts';
@@ -33,6 +33,8 @@ export function InventoryScreen({ goLabels }: { goLabels: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [movement, setMovement] = useState<CatalogHit | null>(null);
   const [creating, setCreating] = useState(false);
+  const [addingVariant, setAddingVariant] = useState<{ product?: { productId: string; productName: string }; code?: string } | null>(null);
+  const [editing, setEditing] = useState<CatalogHit | null>(null);
 
   useEffect(() => {
     Promise.all([call('catalog:branches'), call('device:get'), call('inventory:permissions')])
@@ -75,7 +77,12 @@ export function InventoryScreen({ goLabels }: { goLabels: () => void }) {
     <div className="page">
       <div className="row-between">
         <h1>Inventario</h1>
-        {perms?.canCreateProduct && <button className="btn btn-gold" onClick={() => setCreating(true)}>Nuevo producto</button>}
+        {perms?.canCreateProduct && (
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn" onClick={() => setAddingVariant({})}>Agregar como variante</button>
+            <button className="btn btn-gold" onClick={() => setCreating(true)}>Nuevo producto</button>
+          </div>
+        )}
       </div>
       <div className="filters">
         <Field label="Sucursal">
@@ -118,6 +125,8 @@ export function InventoryScreen({ goLabels }: { goLabels: () => void }) {
                 <div className="row-gap row-end">
                   <button className="btn btn-sm" onClick={() => setMovement(h)}>{perms?.canEnter || perms?.canMove ? 'Movimiento' : 'Ver'}</button>
                   <button className="btn btn-sm" onClick={() => toLabels(h)}>Etiqueta</button>
+                  {isManager && <button className="btn btn-sm" onClick={() => setEditing(h)}>Editar</button>}
+                  {isManager && <button className="btn btn-sm" title="Agregar otra presentación (con su código de barras) a este producto" onClick={() => setAddingVariant({ product: { productId: h.productId, productName: h.productName } })}>+ Variante</button>}
                 </div>
               </td>
             </tr>
@@ -131,8 +140,21 @@ export function InventoryScreen({ goLabels }: { goLabels: () => void }) {
       {movement && perms && (
         <MovementModal initial={movement} perms={perms} branches={branches} defaultBranchId={branchId} onClose={() => setMovement(null)} onDone={() => { setMovement(null); void load(); }} />
       )}
+      {editing && (
+        <EditProductModal hit={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); window.setTimeout(() => void load(), 1500); }} />
+      )}
       {creating && (
-        <NewProductModal initialCode="" branches={branches} defaultBranchId={branchId} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); window.setTimeout(() => void load(), 1500); }} />
+        <NewProductModal
+          initialCode="" branches={branches} defaultBranchId={branchId} onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); window.setTimeout(() => void load(), 1500); }}
+          onAsVariant={(code) => { setCreating(false); setAddingVariant({ code }); }}
+        />
+      )}
+      {addingVariant && (
+        <AddVariantModal
+          product={addingVariant.product} initialCode={addingVariant.code} branches={branches} defaultBranchId={branchId}
+          onClose={() => setAddingVariant(null)} onDone={() => { setAddingVariant(null); window.setTimeout(() => void load(), 1500); }}
+        />
       )}
     </div>
   );

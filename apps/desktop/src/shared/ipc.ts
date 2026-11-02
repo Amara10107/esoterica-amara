@@ -5,7 +5,7 @@
  *   proceso principal vuelve a validar sesión y permisos en CADA llamada (ocultar un botón
  *   en pantalla nunca es la seguridad).
  */
-import type { CashBreakdown, CashMovementType, PaymentInput, PaymentMethod, Role, Sale, SaleAdjustment, SalesSummary, SaleType, TokenPurpose } from '@amara/shared';
+import type { AdvanceEntryKind, AdvanceFull, AdvanceMethod, CashBreakdown, CashMovementType, PaymentInput, PaymentMethod, Role, Sale, SaleAdjustment, SalesSummary, SaleType, TokenPurpose } from '@amara/shared';
 import type { CatalogHit } from '@amara/database';
 import type { AppSettings } from './settings.ts';
 
@@ -84,12 +84,16 @@ export interface SaleItemReq {
   kind?: 'producto' | 'extra';
   unitPriceCents?: number;
   extraNote?: string;
+  /** v2.1. Extra del catálogo (venta normal): el precio y el nombre salen de ahí. */
+  extraId?: string;
 }
 
 /** v2. Documento imprimible con vista previa. */
 export type DocRequest =
   | { kind: 'ticket'; saleId: string }
   | { kind: 'closure'; sessionId: string }
+  /** v2.3. Ticket de un anticipo de limpia con QR. `entryId`: el abono que se imprime (por omisión, el estado completo). */
+  | { kind: 'advance'; advanceId: string; entryId?: string }
   | {
       kind: 'permit';
       permit: {
@@ -220,10 +224,22 @@ export interface RemoteScan { code: string; deviceName: string; found: boolean }
 export interface LabelItem { variantId: string; code: string; productName: string; label: string; priceCents: number; copies: number }
 export interface LabelBatch { id: string; at: string; items: LabelItem[] }
 
+export interface NewProductVariantInput {
+  label: string; barcode?: string; costCents: number; priceCents: number; minStock: number;
+  /** Existencia inicial en la sucursal elegida (obligatoria: 1 o más). */
+  initialQty: number;
+}
 export interface NewProductInput {
   name: string; type: string; category: string; sku: string; brand?: string; description?: string;
-  variantLabel: string; barcode?: string; costCents: number; priceCents: number; minStock: number;
-  branchId: string; location?: string; initialQty: number;
+  branchId: string; location?: string;
+  /** v2.3. Una o varias variantes; cada una con su código de barras, costo, precio y existencia. */
+  variants: NewProductVariantInput[];
+}
+
+/** v2.3.4. Agrega variantes nuevas (cada una con su código de barras) a un producto que ya existe. */
+export interface AddVariantInput {
+  productId: string; branchId: string; location?: string;
+  variants: NewProductVariantInput[];
 }
 
 export interface AppInfo {
@@ -271,6 +287,11 @@ export interface IpcMap {
   'catalog:branches': { req: undefined; res: BranchRow[] };
   'catalog:checkCode': { req: { code: string }; res: { existsLocal: boolean; existsRemote: boolean | null } };
   'catalog:createProduct': { req: NewProductInput; res: { created: true } };
+  'catalog:addVariant': { req: AddVariantInput; res: { added: number } };
+  /** v2.2. Editar nombre/tipo/categoría/marca de un producto (necesita el servidor). Precios y costos se cambian en la web. */
+  'catalog:updateProduct': { req: { productId: string; name: string; type: string; category: string; brand?: string }; res: { updated: true } };
+  /** v2.2. Archivar o restaurar un producto (no se borra; el historial se conserva). */
+  'catalog:archiveProduct': { req: { productId: string; archive: boolean; /** v2.4.4: true = Borrar (papelera; se restaura desde la web). */ remove?: boolean }; res: { done: true } };
 
   'sales:create': {
     req: {
@@ -302,6 +323,11 @@ export interface IpcMap {
   'security:verify': { req: { purpose: TokenPurpose; code?: string; adminPassword?: string }; res: AuthTicket };
   'extras:get': { req: undefined; res: { categories: string[] } };
   'extras:set': { req: { categories: string[] }; res: { categories: string[]; savedOnServer: boolean } };
+  /** v2.1. Extras por tipo de producto: el catálogo configurado y los tipos que hay en el inventario local. */
+  'extrasCatalog:get': { req: undefined; res: { items: import('@amara/shared').ExtraOption[]; types: string[] } };
+  /** v2.2. Apariencia elegida por el administrador (se recibe al sincronizar). */
+  'theme:get': { req: undefined; res: import('@amara/shared').ThemeSettings };
+  'extrasCatalog:set': { req: { items: import('@amara/shared').ExtraOption[] }; res: { items: import('@amara/shared').ExtraOption[]; savedOnServer: boolean } };
   'tokens:list': { req: undefined; res: TokenRowView[] };
   'tokens:create': {
     req: {
@@ -326,7 +352,18 @@ export interface IpcMap {
 
   'cash:status': { req: undefined; res: CashStatus };
   'cash:open': { req: { openingCents: number }; res: { sessionId: string } };
-  'cash:movement': { req: { type: CashMovementType; amountCents: number; concept: string }; res: true };
+  /** v2.3. Retiro/gasto: el motivo es obligatorio y se pide autorización (gerente: sin contraseña extra; vendedor: admin o token). */
+  'cash:movement': { req: { type: CashMovementType; amountCents: number; concept: string } & SensitiveAuth; res: true };
+  /** v2.3. Anticipos de limpias. Cualquiera recibe uno; consultar, abonar y registrar usos es solo del gerente. */
+  'advances:create': {
+    req: { clientName: string; clientPhone?: string; concept?: string; amountCents: number; method?: AdvanceMethod; note?: string };
+    res: { advance: AdvanceFull; cashRegistered: boolean };
+  };
+  'advances:list': { req: { text?: string; status?: 'abierto' | 'cerrado' | 'todos' }; res: AdvanceFull[] };
+  'advances:addEntry': {
+    req: { advanceId: string; kind: AdvanceEntryKind; amountCents?: number; method?: AdvanceMethod; note?: string };
+    res: { advance: AdvanceFull; cashRegistered: boolean };
+  };
   'cash:breakdown': { req: undefined; res: { sessionId: string; openedAt: string; openedByName: string | null; breakdown: CashBreakdown } | null };
   'cash:close': {
     req: { countedCents: number; denominations: Record<string, number>; notes: string } & SensitiveAuth;
@@ -345,7 +382,7 @@ export interface IpcMap {
   'backup:list': { req: undefined; res: BackupLogRow[] };
 
   'lan:state': { req: undefined; res: LanState };
-  'lan:startPairing': { req: { host: string }; res: LanState };
+  'lan:startPairing': { req: { host: string } & SensitiveAuth; res: LanState };
   'lan:cancelPairing': { req: undefined; res: LanState };
   'lan:revoke': { req: { deviceId: string }; res: LanState };
   'lan:setEnabled': { req: { enabled: boolean }; res: LanState };
@@ -364,16 +401,16 @@ export const CHANNEL_NAMES: Record<IpcChannel, true> = {
   'settings:get': true, 'settings:save': true, 'settings:pickFolder': true, 'settings:testApi': true,
   'print:printers': true, 'print:test': true, 'print:ticket': true, 'print:labels': true,
   'catalog:lookup': true, 'catalog:search': true, 'catalog:variants': true, 'catalog:inventory': true,
-  'catalog:branches': true, 'catalog:checkCode': true, 'catalog:createProduct': true,
+  'catalog:branches': true, 'catalog:checkCode': true, 'catalog:createProduct': true, 'catalog:addVariant': true, 'catalog:updateProduct': true, 'catalog:archiveProduct': true,
   'sales:create': true, 'sales:list': true, 'sales:detail': true, 'sales:cancel': true, 'sales:refund': true,
   'inventory:permissions': true, 'inventory:move': true,
-  'cash:status': true, 'cash:open': true, 'cash:movement': true, 'cash:breakdown': true, 'cash:close': true,
+  'cash:status': true, 'cash:open': true, 'cash:movement': true, 'advances:create': true, 'advances:list': true, 'advances:addEntry': true, 'cash:breakdown': true, 'cash:close': true,
   'cash:closures': true, 'cash:summaryToday': true,
   'sync:state': true, 'sync:now': true, 'sync:queue': true, 'sync:conflicts': true,
   'backup:state': true, 'backup:now': true, 'backup:list': true,
   'lan:state': true, 'lan:startPairing': true, 'lan:cancelPairing': true, 'lan:revoke': true, 'lan:setEnabled': true,
   'labels:history': true, 'labels:saveBatch': true,
-  'sellers:list': true, 'catalog:categories': true, 'security:verify': true, 'extras:get': true, 'extras:set': true,
+  'sellers:list': true, 'catalog:categories': true, 'security:verify': true, 'extras:get': true, 'extras:set': true, 'extrasCatalog:get': true, 'extrasCatalog:set': true, 'theme:get': true,
   'tokens:list': true, 'tokens:create': true, 'tokens:revoke': true,
   'print:preview': true, 'print:document': true, 'labels:savePdf': true,
 };

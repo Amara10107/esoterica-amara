@@ -18,6 +18,8 @@ export default function TerminalSetup() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const locked = app.phase === 'listo' && app.session?.user.role !== 'gerente';
+
   async function save() {
     setError(null);
     const code = terminalCode.trim().toUpperCase();
@@ -34,6 +36,14 @@ export default function TerminalSetup() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (locked) {
+    return (
+      <Screen>
+        <Banner kind="warn" text="Solo el gerente puede modificar la terminal." />
+      </Screen>
+    );
   }
 
   return (

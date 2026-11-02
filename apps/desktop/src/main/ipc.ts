@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import { StoreError } from '@amara/database';
 import type { CatalogHit, RegisterSaleItem } from '@amara/database';
 import {
-  SaleValidationError, can, isExtraCategory, isTokenPurpose, mxDayBounds, mxRangeBounds, mxTodayKey, newId, normalizeTokenCode,
-  sanitizeExtraCategories, sumDenominations,
+  SaleValidationError, can, isTokenPurpose, mxDayBounds, mxRangeBounds, mxTodayKey, newId, normalizeTokenCode,
+  sanitizeExtraCatalog, sanitizeExtraCategories, sumDenominations,
 } from '@amara/shared';
 import type { ActionAuthorization, Permission, Sale, TokenPurpose } from '@amara/shared';
 import { productCreateSchema } from '@amara/shared/schemas';
@@ -293,11 +293,22 @@ export function registerIpc(ctx: MainCtx): void {
         'Dar de alta productos necesita conexión con el servidor. Cierra sesión y entra de nuevo con internet (el catálogo se administra en el servidor).',
       );
     }
-    if (r.barcode && (await ctx.store.codeExists(r.barcode))) throw new AppError('codigo_duplicado', 'Ya existe un producto con ese código.');
+    if (!Array.isArray(r.variants) || r.variants.length < 1) throw new AppError('datos_invalidos', 'Agrega al menos una variante.');
+    const seen = new Set<string>();
+    for (const v of r.variants) {
+      const code = (v.barcode ?? '').trim();
+      if (!code) continue;
+      if (seen.has(code)) throw new AppError('codigo_duplicado', `El código ${code} está repetido en dos variantes.`);
+      seen.add(code);
+      if (await ctx.store.codeExists(code)) throw new AppError('codigo_duplicado', `Ya existe un producto con el código ${code}.`);
+    }
+    if (r.variants.some((v) => !Number.isInteger(v.initialQty) || v.initialQty < 1)) {
+      throw new AppError('existencia_requerida', 'La existencia inicial es obligatoria: cada variante necesita 1 pieza o más (no puede quedar en 0).');
+    }
     const parsed = productCreateSchema.safeParse({
       product: { name: r.name, type: r.type, category: r.category, sku: r.sku, brand: r.brand || undefined, description: r.description || undefined, specs: {} },
-      variants: [{ label: r.variantLabel, unit: 'pieza', barcode: r.barcode || undefined, costCents: r.costCents, priceCents: r.priceCents, minStock: r.minStock, location: r.location || undefined }],
-      initialStock: r.initialQty > 0 ? [{ variantIndex: 0, branchId: r.branchId, qty: r.initialQty, location: r.location || undefined }] : [],
+      variants: r.variants.map((v) => ({ label: v.label, unit: 'pieza', barcode: v.barcode?.trim() || undefined, costCents: v.costCents, priceCents: v.priceCents, minStock: v.minStock, location: r.location || undefined })),
+      initialStock: r.variants.map((v, i) => ({ variantIndex: i, branchId: r.branchId, qty: v.initialQty, location: r.location || undefined })),
     });
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -313,6 +324,79 @@ export function registerIpc(ctx: MainCtx): void {
     return { created: true as const };
   });
 
+  on('catalog:addVariant', { anyOf: ['productos.editar'] }, async (r) => {
+    const token = ctx.auth.apiToken();
+    const apiUrl = ctx.settings.get().apiUrl;
+    if (!token || !apiUrl) {
+      throw new AppError('requiere_internet', 'Agregar una variante necesita conexión con el servidor. Cierra sesión y entra de nuevo con internet.');
+    }
+    if (!r.productId) throw new AppError('datos_invalidos', 'Elige el producto del que será variante.');
+    if (!Array.isArray(r.variants) || r.variants.length < 1) throw new AppError('datos_invalidos', 'Agrega al menos una variante.');
+    const seen = new Set<string>();
+    for (const v of r.variants) {
+      const code = (v.barcode ?? '').trim();
+      if (!code) continue;
+      if (seen.has(code)) throw new AppError('codigo_duplicado', `El código ${code} está repetido.`);
+      seen.add(code);
+      if (await ctx.store.codeExists(code)) throw new AppError('codigo_duplicado', `Ya existe un producto con el código ${code}.`);
+    }
+    if (r.variants.some((v) => !Number.isInteger(v.initialQty) || v.initialQty < 1)) {
+      throw new AppError('existencia_requerida', 'La existencia inicial es obligatoria: cada variante necesita 1 pieza o más (no puede quedar en 0).');
+    }
+    const body = {
+      variants: r.variants.map((v) => ({ label: v.label, unit: 'pieza', barcode: v.barcode?.trim() || undefined, costCents: v.costCents, priceCents: v.priceCents, minStock: v.minStock, location: r.location || undefined })),
+      initialStock: r.variants.map((v, i) => ({ variantIndex: i, branchId: r.branchId, qty: v.initialQty, location: r.location || undefined })),
+    };
+    try {
+      await apiRequest(apiUrl, `/catalog/products/${encodeURIComponent(r.productId)}/variants`, { method: 'POST', token, body, timeoutMs: 20_000 });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) throw new AppError('sesion_servidor', 'La sesión con el servidor venció. Cierra sesión y entra de nuevo con internet.');
+      throw e;
+    }
+    await ctx.sync.runNow();
+    return { added: r.variants.length };
+  });
+
+  // v2.2: editar y archivar productos desde el inventario (el catálogo vive en el servidor; se necesita conexión).
+  const catalogServer = () => {
+    const token = ctx.auth.apiToken();
+    const apiUrl = ctx.settings.get().apiUrl;
+    if (!token || !apiUrl) {
+      throw new AppError('requiere_internet', 'Esto necesita conexión con el servidor. Cierra sesión y entra de nuevo con internet (el catálogo se administra en el servidor).');
+    }
+    return { token, apiUrl };
+  };
+  on('catalog:updateProduct', { anyOf: ['productos.editar'] }, async (r) => {
+    const { token, apiUrl } = catalogServer();
+    const name = String(r.name ?? '').trim();
+    const type = String(r.type ?? '').trim();
+    const category = String(r.category ?? '').trim();
+    if (name.length < 2) throw new AppError('datos_invalidos', 'Escribe el nombre del producto.');
+    if (!type) throw new AppError('datos_invalidos', 'Escribe el tipo.');
+    if (!category) throw new AppError('datos_invalidos', 'Escribe la categoría.');
+    try {
+      await apiRequest(apiUrl, `/catalog/products/${encodeURIComponent(String(r.productId))}`, {
+        method: 'PATCH', token, body: { name, type, category, brand: String(r.brand ?? '').trim() || undefined }, timeoutMs: 15_000,
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) throw new AppError('sesion_servidor', 'La sesión con el servidor venció. Cierra sesión y entra de nuevo con internet.');
+      throw e;
+    }
+    await ctx.sync.runNow();
+    return { updated: true as const };
+  });
+  on('catalog:archiveProduct', { anyOf: ['productos.editar'] }, async (r) => {
+    const { token, apiUrl } = catalogServer();
+    try {
+      await apiRequest(apiUrl, `/catalog/products/${encodeURIComponent(String(r.productId))}/${r.remove === true ? 'delete' : r.archive ? 'archive' : 'restore'}`, { method: 'POST', token, body: {}, timeoutMs: 15_000 });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) throw new AppError('sesion_servidor', 'La sesión con el servidor venció. Cierra sesión y entra de nuevo con internet.');
+      throw e;
+    }
+    await ctx.sync.runNow();
+    return { done: true as const };
+  });
+
   // ───────────── Ventas ─────────────
   on('sales:create', { anyOf: ['ventas.crear'] }, async (r, user) => {
     if (typeof r.saleId !== 'string' || r.saleId.length < 8) throw new AppError('datos_invalidos', 'Falta el identificador de la venta.');
@@ -325,8 +409,7 @@ export function registerIpc(ctx: MainCtx): void {
     const seller = (await listSellers(user!)).find((x) => x.id === r.sellerId);
     if (!seller) throw new AppError('vendedor_invalido', 'Elige quién vende (la lista de empleados de esta sucursal).');
 
-    // Líneas: producto (qty entero) o extra (1 pieza, monto y nota). Un extra solo en categorías configuradas (o dentro de una Limpia).
-    const extraCats = await ctx.store.getExtraCategories();
+    // Líneas: producto (qty entero) o extra (1 pieza). Un extra de venta normal viene del catálogo de extras por tipo.
     const items: RegisterSaleItem[] = [];
     for (const i of r.items) {
       const variantId = String(i.variantId ?? '');
@@ -337,13 +420,10 @@ export function registerIpc(ctx: MainCtx): void {
         if (Number(i.qty) !== 1) throw new AppError('datos_invalidos', 'Un extra es siempre de 1 unidad.');
         if (!Number.isInteger(cents) || cents < 0 || cents > MAX_EXTRA_CENTS) throw new AppError('datos_invalidos', 'El monto del extra no es válido.');
         if (note.length < 2 || note.length > MAX_NOTE_LEN) throw new AppError('datos_invalidos', 'Escribe una nota para el extra (de 2 a 120 letras).');
-        if (type !== 'limpia') {
-          const cat = await ctx.store.db.get<{ category: string }>('SELECT p.category AS category FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?', [variantId]);
-          if (!cat || !isExtraCategory(cat.category, extraCats)) {
-            throw new AppError('extra_no_permitido', 'Ese producto no admite Extra (su categoría no está configurada para extras).');
-          }
-        }
-        items.push({ variantId, qty: 1, kind: 'extra' as const, unitPriceCents: cents, extraNote: note });
+        // v2.1: en una venta normal el extra SALE DEL CATÁLOGO (lo valida el almacén local y fija precio y nombre).
+        const extraId = type === 'limpia' ? undefined : String(i.extraId ?? '');
+        if (type !== 'limpia' && !extraId) throw new AppError('extra_invalido', 'Elige el extra de la lista (el precio lo fija el administrador).');
+        items.push({ variantId, qty: 1, kind: 'extra' as const, unitPriceCents: cents, extraNote: note, ...(extraId ? { extraId } : {}) });
       } else {
         const qty = Number(i.qty);
         if (!Number.isInteger(qty) || qty < 1 || qty > 9999) throw new AppError('datos_invalidos', 'Hay una cantidad no válida.');
@@ -352,10 +432,17 @@ export function registerIpc(ctx: MainCtx): void {
     }
 
     // Limpias: el gerente entra libremente; el vendedor solo con contraseña de administrador o token 'limpias'.
+    // Descuento: en una venta normal el vendedor necesita contraseña de admin o token 'descuento'; en Limpias es solo del administrador.
+    const wantsDiscount = (Number(r.discountCents) || 0) > 0;
+    if (wantsDiscount && type === 'limpia' && !can(user!.role, 'ventas.descuento')) {
+      throw new AppError('sin_permiso', 'Solo el administrador puede aplicar descuentos en Limpias.');
+    }
     const auth =
       type === 'limpia'
         ? await sensitive(user!, { permission: 'caja.corte', purpose: 'limpias', ticket: r.ticket, managerNeedsPassword: false })
-        : { authorization: undefined, trusted: false, done: () => undefined };
+        : wantsDiscount
+          ? await sensitive(user!, { permission: 'ventas.descuento', purpose: 'descuento', ticket: r.ticket, managerNeedsPassword: false })
+          : { authorization: undefined, trusted: false, done: () => undefined };
 
     // Las existencias las valida el almacén local dentro de la transacción: StoreError('sin_existencia') llega a la pantalla con su mensaje.
     const res = await ctx.store.registerSale({
@@ -535,6 +622,31 @@ export function registerIpc(ctx: MainCtx): void {
     return { categories, savedOnServer };
   });
 
+  // v2.1: extras por tipo de producto. Cualquier usuario los lee (para elegir); solo el gerente los cambia.
+  on('theme:get', { auth: false }, async () => ctx.store.getTheme());
+
+  on('extrasCatalog:get', {}, async () => ({ items: await ctx.store.getExtraCatalog(), types: await ctx.store.listProductTypes() }));
+
+  on('extrasCatalog:set', { anyOf: ['config.editar'] }, async (r) => {
+    if (!Array.isArray(r.items)) throw new AppError('datos_invalidos', 'Lista de extras inválida.');
+    let items = sanitizeExtraCatalog(r.items);
+    let savedOnServer = false;
+    const apiUrl = ctx.settings.get().apiUrl;
+    const token = ctx.auth.apiToken();
+    if (apiUrl && token) {
+      try {
+        const res = await apiRequest<{ items: unknown }>(apiUrl, '/settings/extras', { method: 'PUT', token, body: { items }, timeoutMs: 10_000 });
+        items = sanitizeExtraCatalog(res.items);
+        savedOnServer = true;
+      } catch (e) {
+        // Un rechazo del servidor (permiso, datos) se muestra; solo una falla de red permite guardar la copia local.
+        if (!(e instanceof Error) || (e instanceof ApiError && e.status < 500 && e.status !== 408)) throw e;
+      }
+    }
+    items = await ctx.store.setExtraCatalogLocal(items);
+    return { items, savedOnServer };
+  });
+
   // ───────────── v2: tokens de seguridad (gerente, EN LÍNEA) ─────────────
   const onlineSession = () => {
     const apiUrl = ctx.settings.get().apiUrl;
@@ -622,6 +734,9 @@ export function registerIpc(ctx: MainCtx): void {
       if (!can(user.role, 'caja.corte')) throw new AppError('sin_permiso', 'Solo el gerente puede ver el ticket de cierre.');
       return ctx.print.closurePreview(String(doc.sessionId));
     }
+    if (doc.kind === 'advance') {
+      return ctx.print.advancePreview(String(doc.advanceId), doc.entryId ? String(doc.entryId) : null);
+    }
     if (doc.kind === 'permit') {
       if (!can(user.role, 'config.editar')) throw new AppError('sin_permiso', 'Solo el gerente puede generar tickets de permiso.');
       return ctx.print.permitPreview(await permitData(doc.permit, user));
@@ -646,7 +761,7 @@ export function registerIpc(ctx: MainCtx): void {
       const t = await ctx.print.ticketPdfHtml(sale.id);
       return { ok: true, printedCopies: [], savedPath: await ctx.print.savePdf(t.html, t.fileName, { widthMm: preview.paperMm }) };
     }
-    const name = doc.kind === 'closure' ? `Cierre-de-caja-${mxTodayKey()}.pdf` : 'Ticket-de-permiso.pdf';
+    const name = doc.kind === 'closure' ? `Cierre-de-caja-${mxTodayKey()}.pdf` : doc.kind === 'advance' ? `Anticipo-${mxTodayKey()}.pdf` : 'Ticket-de-permiso.pdf';
     return { ok: true, printedCopies: [], savedPath: await ctx.print.savePdf(preview.pages[0]!.html, name, { widthMm: preview.paperMm }) };
   });
 
@@ -703,11 +818,56 @@ export function registerIpc(ctx: MainCtx): void {
     ctx.sync.syncSoon();
     return { sessionId };
   });
-  on('cash:movement', { anyOf: ['caja.movimientos'] }, async (r) => {
+  on('cash:movement', {}, async (r, user) => {
+    if (user!.role !== 'gerente' && user!.role !== 'vendedor') throw new AppError('sin_permiso', 'No tienes permiso para mover dinero de la caja.');
+    if (r.type !== 'entrada' && r.type !== 'retiro' && r.type !== 'gasto') throw new AppError('datos_invalidos', 'Tipo de movimiento inválido.');
+    const concept = String(r.concept ?? '').trim();
+    // v2.3. Sacar dinero (retiro/gasto): motivo obligatorio y autorización. El gerente no necesita escribir contraseña; el vendedor sí
+    // (contraseña de un administrador o token 'retiro_caja'). Meter efectivo a mano (entrada) es solo del gerente.
+    const outflow = r.type !== 'entrada';
+    const auth = outflow
+      ? await sensitive(user!, { permission: 'caja.movimientos', purpose: 'retiro_caja', password: r.password, ticket: r.ticket, managerNeedsPassword: false })
+      : { authorization: undefined, trusted: false, done: () => undefined };
+    if (!outflow && !can(user!.role, 'caja.movimientos')) throw new AppError('sin_permiso', 'Solo el gerente puede registrar entradas de efectivo.');
     const d = await device();
-    await ctx.store.addCashMovement({ actor: ctx.auth.actor(), terminalId: d.terminalId, type: r.type, amountCents: Number(r.amountCents), concept: String(r.concept ?? '') });
+    await ctx.store.addCashMovement({
+      actor: ctx.auth.actor(), terminalId: d.terminalId, type: r.type, amountCents: Number(r.amountCents), concept,
+      authorization: auth.authorization, authorizationTrusted: auth.trusted,
+    });
+    auth.done();
     ctx.sync.syncSoon();
     return true as const;
+  });
+
+  // ───────────── v2.3: anticipos de limpias ─────────────
+  on('advances:create', { anyOf: ['ventas.crear'] }, async (r, user) => {
+    const d = await device();
+    const res = await ctx.store.createAdvance({
+      actor: ctx.auth.actor(), branchId: d.branchId, terminalId: d.terminalId, terminalCode: d.terminalCode,
+      clientName: String(r.clientName ?? ''), clientPhone: r.clientPhone ? String(r.clientPhone).slice(0, 30) : undefined,
+      concept: r.concept ? String(r.concept).slice(0, 200) : undefined, amountCents: Number(r.amountCents),
+      method: r.method === 'tarjeta' || r.method === 'transferencia' ? r.method : 'efectivo', note: r.note ? String(r.note).slice(0, 300) : undefined,
+    });
+    void user;
+    ctx.sync.syncSoon();
+    return res;
+  });
+  on('advances:list', { anyOf: ['caja.corte'] }, async (r) => {
+    const d = await device();
+    return ctx.store.searchAdvances({ branchId: d.branchId, text: r.text ? String(r.text).slice(0, 100) : undefined, status: r.status ?? 'todos', limit: 200 });
+  });
+  on('advances:addEntry', { anyOf: ['caja.corte'] }, async (r) => {
+    const d = await device();
+    const kinds = ['abono', 'uso', 'cierre', 'reapertura'] as const;
+    if (!kinds.includes(r.kind)) throw new AppError('datos_invalidos', 'Movimiento inválido.');
+    const res = await ctx.store.addAdvanceEntry({
+      actor: ctx.auth.actor(), terminalId: d.terminalId, advanceId: String(r.advanceId), kind: r.kind,
+      amountCents: r.amountCents === undefined ? undefined : Number(r.amountCents),
+      method: r.method === 'tarjeta' || r.method === 'transferencia' ? r.method : r.method === 'efectivo' ? 'efectivo' : undefined,
+      note: r.note ? String(r.note).slice(0, 300) : undefined,
+    });
+    ctx.sync.syncSoon();
+    return res;
   });
   on('cash:breakdown', { anyOf: ['caja.corte'] }, async () => {
     const d = await device();
@@ -777,9 +937,16 @@ export function registerIpc(ctx: MainCtx): void {
   on('backup:list', { anyOf: ['respaldos.ver'] }, () => ctx.store.listBackups(40));
 
   // ───────────── Teléfono (LAN) ─────────────
-  on('lan:state', { anyOf: ['config.editar'] }, () => ctx.lan.state());
-  on('lan:startPairing', { anyOf: ['config.editar'] }, ({ host }) => ctx.lan.startPairing(String(host ?? '')));
-  on('lan:cancelPairing', { anyOf: ['config.editar'] }, () => ctx.lan.cancelPairing());
+  // v2.1: el vendedor también puede VER el estado y vincular un teléfono, pero solo con un token de seguridad
+  // (propósito 'escaner') o la contraseña de un administrador. Revocar y activar/desactivar siguen siendo del gerente.
+  on('lan:state', { anyOf: ['ventas.crear'] }, () => ctx.lan.state());
+  on('lan:startPairing', { anyOf: ['ventas.crear'] }, async (r, user) => {
+    const auth = await sensitive(user!, { permission: 'config.editar', purpose: 'escaner', ticket: r.ticket, managerNeedsPassword: false });
+    const state = await ctx.lan.startPairing(String(r.host ?? ''));
+    auth.done();
+    return state;
+  });
+  on('lan:cancelPairing', { anyOf: ['ventas.crear'] }, () => ctx.lan.cancelPairing());
   on('lan:revoke', { anyOf: ['config.editar'] }, ({ deviceId }) => ctx.lan.revoke(String(deviceId ?? '')));
   on('lan:setEnabled', { anyOf: ['config.editar'] }, async ({ enabled }) => {
     ctx.settings.save({ lanEnabled: !!enabled });

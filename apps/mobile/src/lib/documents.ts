@@ -7,14 +7,16 @@
  * saldrá negro: el rótulo "TICKET DE PERMISO" y el marco lo distinguen igual. El CÓDIGO del token solo existe en
  * pantalla justo después de crearlo (el servidor no lo vuelve a dar), así que este ticket solo puede generarse entonces.
  */
-import { formatMXN, formatMxDateTime } from '@amara/shared';
-import type { ActionAuthorization, CashBreakdown, TokenPurpose } from '@amara/shared';
+import { buildAdvanceTicketLines, buildPeriodCutLines, formatMXN, formatMxDateTime } from '@amara/shared';
+import type { ActionAuthorization, AdvanceFull, PeriodCutRecord, TicketLine, CashBreakdown, TokenPurpose } from '@amara/shared';
 import { escapeHtml } from './ticket-render.ts';
 
 export type DocLine =
   | { kind: 'band' | 'title' | 'text' | 'bold' | 'small' | 'code'; text: string }
   | { kind: 'pair'; text: string; value: string; strong?: boolean }
-  | { kind: 'rule' | 'gap' };
+  | { kind: 'rule' | 'gap' }
+  /** HTML ya armado (por ejemplo el QR en SVG). */
+  | { kind: 'html'; html: string };
 
 // ───────────── Textos ─────────────
 
@@ -23,6 +25,10 @@ export const PURPOSE_NAME: Record<TokenPurpose, string> = {
   devolucion: 'Devolución',
   cancelacion: 'Cancelación',
   limpias: 'Limpias',
+  escaner: 'Teléfono como escáner',
+  descuento: 'Descuentos',
+  apertura_caja: 'Apertura de caja (emergencia)',
+  retiro_caja: 'Retiros y gastos de caja',
 };
 
 /** Minutos -> "45 min", "1 h 30 min", "2 h", "1 día", "2 días 3 h". */
@@ -176,12 +182,14 @@ export function buildPermitModel(d: PermitTicketData): DocLine[] {
 
 // ───────────── HTML ─────────────
 
-export type DocTheme = 'cierre' | 'permiso';
+export type DocTheme = 'cierre' | 'permiso' | 'anticipo' | 'periodo';
 
 /** Colores del documento. El permiso es violeta; el cierre, negro. */
 export const DOC_COLORS: Record<DocTheme, { main: string; tint: string }> = {
   cierre: { main: '#111111', tint: '#F2F2F2' },
   permiso: { main: '#5B3A8C', tint: '#F1ECF8' },
+  anticipo: { main: '#111111', tint: '#F2F2F2' },
+  periodo: { main: '#302142', tint: '#F1ECF8' },
 };
 
 export function docHtml(lines: DocLine[], theme: DocTheme, opts: { title?: string } = {}): string {
@@ -203,6 +211,8 @@ export function docHtml(lines: DocLine[], theme: DocTheme, opts: { title?: strin
           return `<div class="code">${escapeHtml(l.text)}</div>`;
         case 'pair':
           return `<div class="pair${l.strong ? ' strong' : ''}"><span>${escapeHtml(l.text)}</span><span>${escapeHtml(l.value)}</span></div>`;
+        case 'html':
+          return l.html;
         case 'rule':
           return '<hr>';
         case 'gap':
@@ -211,7 +221,7 @@ export function docHtml(lines: DocLine[], theme: DocTheme, opts: { title?: strin
     })
     .join('\n');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(opts.title ?? (theme === 'permiso' ? 'Ticket de permiso' : 'Cierre de caja'))}</title>
+<title>${escapeHtml(opts.title ?? (theme === 'permiso' ? 'Ticket de permiso' : theme === 'anticipo' ? 'Anticipo de limpia' : theme === 'periodo' ? 'Corte por periodo' : 'Cierre de caja'))}</title>
 <style>
 @page { size: 80mm auto; margin: 4mm; }
 body { font-family: monospace; font-size: 12px; color: #111; margin: 0; padding: 6px; }
@@ -226,9 +236,40 @@ body { font-family: monospace; font-size: 12px; color: #111; margin: 0; padding:
 .pair span:last-child { text-align: right; }
 .strong { font-weight: bold; }
 .gap { height: 8px; }
+.qrbox { display: flex; justify-content: center; margin: 6px 0; }
+.qrbox svg { width: 150px; height: 150px; }
 hr { border: 0; border-top: 1px dashed ${c.main}; margin: 6px 0; }
 </style></head><body><div class="doc">${body}</div></body></html>`;
 }
 
 export const closureHtml = (d: ClosureTicketData): string => docHtml(buildClosureModel(d), 'cierre');
 export const permitHtml = (d: PermitTicketData): string => docHtml(buildPermitModel(d), 'permiso');
+
+// ───────────── Anticipos de limpias y corte por periodo (v2.3) ─────────────
+
+/** Convierte los renglones compartidos en DocLine. `qr` dibuja el QR (matriz -> SVG); si falla, se omite. */
+function toDocLines(lines: TicketLine[], qr?: (text: string) => string): DocLine[] {
+  const out: DocLine[] = [];
+  for (const l of lines) {
+    if (l.kind === 'qr') {
+      let svg = '';
+      try {
+        svg = qr ? qr(l.text) : '';
+      } catch {
+        svg = '';
+      }
+      if (svg) out.push({ kind: 'html', html: `<div class="qrbox">${svg}</div>` });
+    } else out.push(l as DocLine);
+  }
+  return out;
+}
+
+export function buildAdvanceModel(a: AdvanceFull, opts: { branchName?: string; uptoEntryId?: string | null; qr?: (text: string) => string }): DocLine[] {
+  return toDocLines(buildAdvanceTicketLines(a, { branchName: opts.branchName, uptoEntryId: opts.uptoEntryId, fmtMoney: formatMXN, fmtDateTime: formatMxDateTime }), opts.qr);
+}
+
+export const advanceHtml = (a: AdvanceFull, opts: { branchName?: string; uptoEntryId?: string | null; qr?: (text: string) => string }): string =>
+  docHtml(buildAdvanceModel(a, opts), 'anticipo', { title: `Anticipo ${a.code}` });
+
+export const periodCutHtml = (rec: PeriodCutRecord): string =>
+  docHtml(toDocLines(buildPeriodCutLines(rec, { fmtMoney: formatMXN, fmtDateTime: formatMxDateTime })), 'periodo', { title: rec.title });

@@ -9,7 +9,7 @@ import { Banner, Button, Field, H1, Muted, P, Spacer } from '../src/components/u
 import { useApp } from '../src/state/AppContext';
 import { ApiError } from '../src/services/api';
 import { AuthError } from '../src/services/auth';
-import { LOGO_ASPECT, colors, space } from '../src/theme';
+import { colors, space } from '../src/theme';
 
 export default function LoginScreen() {
   const app = useApp();
@@ -85,7 +85,7 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.logoWrap}>
             <Image source={require('../assets/logo-app.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="Esotérica Amara" />
@@ -124,6 +124,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { padding: space.xl, gap: space.md, paddingBottom: 48 },
   logoWrap: { alignItems: 'center', paddingVertical: space.md },
-  logo: { width: 260, aspectRatio: LOGO_ASPECT, borderRadius: 12 },
+  logo: { width: 76, height: 76 },
   center: { textAlign: 'center' },
 });

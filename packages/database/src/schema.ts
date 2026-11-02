@@ -279,9 +279,44 @@ CREATE TRIGGER adj_v2_immutable BEFORE UPDATE OF authorization_json, authorized_
   BEGIN SELECT RAISE(ABORT, 'Historial protegido'); END;
 `;
 
+
+/**
+ * Versión 3 (ADITIVA): anticipos de limpias. Solo se agregan movimientos (abonos, usos, cierres): no se editan ni se borran.
+ *  - cash_movements.advance_id: la entrada de efectivo que corresponde a un abono.
+ */
+const V3 = `
+CREATE TABLE advances (
+  id TEXT PRIMARY KEY, code TEXT NOT NULL,
+  branch_id TEXT NOT NULL, terminal_id TEXT NOT NULL,
+  client_name TEXT NOT NULL, client_phone TEXT, concept TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL, created_by_name TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX idx_advances_branch_created ON advances(branch_id, created_at);
+CREATE INDEX idx_advances_code ON advances(code);
+
+CREATE TABLE advance_entries (
+  id TEXT PRIMARY KEY, advance_id TEXT NOT NULL REFERENCES advances(id),
+  kind TEXT NOT NULL CHECK (kind IN ('abono','uso','cierre','reapertura')),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+  method TEXT CHECK (method IS NULL OR method IN ('efectivo','tarjeta','transferencia')),
+  note TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL, user_name TEXT NOT NULL, created_at TEXT NOT NULL,
+  cash_session_id TEXT
+);
+CREATE INDEX idx_advance_entries_adv ON advance_entries(advance_id, created_at);
+
+ALTER TABLE cash_movements ADD COLUMN advance_id TEXT;
+
+CREATE TRIGGER advances_no_update BEFORE UPDATE ON advances BEGIN SELECT RAISE(ABORT, 'Historial protegido'); END;
+CREATE TRIGGER advances_no_delete BEFORE DELETE ON advances BEGIN SELECT RAISE(ABORT, 'Historial protegido'); END;
+CREATE TRIGGER advance_entries_no_update BEFORE UPDATE ON advance_entries BEGIN SELECT RAISE(ABORT, 'Historial protegido'); END;
+CREATE TRIGGER advance_entries_no_delete BEFORE DELETE ON advance_entries BEGIN SELECT RAISE(ABORT, 'Historial protegido'); END;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'esquema_inicial', sql: V1 },
   { version: 2, name: 'v2_vendedor_extras_tokens_ajustes', sql: V2 },
+  { version: 3, name: 'v3_anticipos_limpias', sql: V3 },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

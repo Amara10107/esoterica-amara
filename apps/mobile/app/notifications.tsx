@@ -77,7 +77,7 @@ export default function Notifications() {
 }
 
 const styles = StyleSheet.create({
-  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   itemOut: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   name: { fontSize: 16, fontWeight: '800', color: colors.text },
   sub: { fontSize: 14, color: colors.muted },

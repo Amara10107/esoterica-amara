@@ -6,16 +6,19 @@ import { formatMXN, formatQty } from '../lib/format.ts';
 import {
   DEFAULT_INVENTORY_FILTERS, countByStatus, filterInventory, uniqueCategories, type InventoryFilters, type StockStatus,
 } from '../lib/inventory.ts';
-import type { InventoryRow, StockMovementRow } from '../lib/types.ts';
-import { Card, ErrorBox, Empty, Modal, PageHeader, Spinner, TableWrap } from '../components/ui.tsx';
+import type { CatalogProduct, InventoryRow, StockMovementRow } from '../lib/types.ts';
+import { Card, ConfirmDialog, ErrorBox, Empty, Modal, PageHeader, Spinner, TableWrap } from '../components/ui.tsx';
+import { ProductEditModal } from '../components/ProductForms.tsx';
 import { BranchSelect, StockBadge, Thumb } from '../components/common.tsx';
 import { MovementsTable } from '../components/MovementsTable.tsx';
-import { useAuth } from '../context.tsx';
+import { useAuth, useToast } from '../context.tsx';
+import { errorMessage } from '../lib/hooks.ts';
 
 const PAGE = 200;
 
 export function Inventory() {
   const { can } = useAuth();
+  const { notify } = useToast();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const initialStatus = params.get('estado');
@@ -25,6 +28,13 @@ export function Inventory() {
   });
   const [limit, setLimit] = useState(PAGE);
   const [history, setHistory] = useState<InventoryRow | null>(null);
+  // v2.2: editar y archivar el producto desde esta pantalla (mismo formulario que Catálogo).
+  const [editing, setEditing] = useState<CatalogProduct | null>(null);
+  const [toggling, setToggling] = useState<InventoryRow | null>(null);
+  const [deleting, setDeleting] = useState<InventoryRow | null>(null);
+  // v2.4.4: en «Todas las sucursales» se ocultan los renglones en 0 de una sucursal si ese producto sí tiene existencia en otra.
+  const [showEmptyBranches, setShowEmptyBranches] = useState(false);
+  const [busy, setBusy] = useState(false);
   const dq = useDebounced(f.q, 200);
 
   // Se pide por sucursal y se busca/filtra en el navegador con la misma lógica probada.
@@ -33,11 +43,56 @@ export function Inventory() {
     [f.branchId],
   );
   const rows = res.data ?? [];
-  const filtered = useMemo(() => filterInventory(rows, { ...f, q: dq }), [rows, f, dq]);
+  // Renglones visibles: sin los «vacíos» de otra sucursal (salvo que se pida verlos, se filtre una sucursal o se busquen agotados).
+  const source = useMemo(() => {
+    if (showEmptyBranches || f.branchId || f.status === 'agotado') return rows;
+    const withStock = new Set(rows.filter((r) => r.qty > 0).map((r) => r.variantId));
+    return rows.filter((r) => r.qty > 0 || !withStock.has(r.variantId));
+  }, [rows, showEmptyBranches, f.branchId, f.status]);
+  const hiddenEmpty = rows.length - source.length;
+  const filtered = useMemo(() => filterInventory(source, { ...f, q: dq }), [source, f, dq]);
   const counts = useMemo(() => countByStatus(rows.filter((r) => !r.archived)), [rows]);
   const categories = useMemo(() => uniqueCategories(rows), [rows]);
   const totalUnits = filtered.reduce((a, r) => a + Math.max(0, r.qty), 0);
   const shown = filtered.slice(0, limit);
+
+  const openEdit = async (r: InventoryRow) => {
+    try {
+      const p = await api.get<CatalogProduct>(`/catalog/products/${r.productId}`);
+      setEditing({ ...p, specs: p.specs ?? {}, variants: p.variants ?? [] });
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  };
+
+  const toggleArchive = async () => {
+    if (!toggling) return;
+    setBusy(true);
+    try {
+      await api.post(`/catalog/products/${toggling.productId}/${toggling.archived ? 'restore' : 'archive'}`, {});
+      notify(toggling.archived ? 'Producto restaurado.' : 'Producto archivado (no se borra).');
+      setToggling(null);
+      res.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const doDelete = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await api.post(`/catalog/products/${deleting.productId}/delete`, {});
+      notify('Producto borrado. Quedó en el historial de borrados (Catálogo → Estado → Historial de borrados).');
+      setDeleting(null);
+      res.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
   const set = <K extends keyof InventoryFilters>(k: K, v: InventoryFilters[K]) => {
     setF((p) => ({ ...p, [k]: v }));
     setLimit(PAGE);
@@ -45,7 +100,11 @@ export function Inventory() {
 
   return (
     <>
-      <PageHeader title="Inventario" subtitle="Existencias por producto, variante y sucursal. Los cambios de existencia solo se hacen con movimientos registrados." />
+      <PageHeader
+        title="Inventario"
+        subtitle="Existencias por producto, variante y sucursal. Los cambios de existencia solo se hacen con movimientos registrados."
+        actions={<button type="button" className="btn" onClick={() => navigate('/catalogo?estado=borrado')}>Historial de borrados</button>}
+      />
       <div className="chips status-chips">
         {(
           [
@@ -88,6 +147,10 @@ export function Inventory() {
         <label className="check">
           <input type="checkbox" checked={f.showArchived} onChange={(e) => set('showArchived', e.target.checked)} />
           <span>Mostrar archivados</span>
+        </label>
+        <label className="check" title="En Todas las sucursales, muestra también los renglones en 0 de una sucursal aunque el producto sí tenga existencia en otra.">
+          <input type="checkbox" checked={showEmptyBranches} onChange={(e) => setShowEmptyBranches(e.target.checked)} />
+          <span>Mostrar sucursales sin existencia{hiddenEmpty > 0 && !showEmptyBranches ? ` (${hiddenEmpty} ocultos)` : ''}</span>
         </label>
       </div>
 
@@ -156,6 +219,19 @@ export function Inventory() {
                             Etiqueta
                           </button>
                         )}
+                        {can('productos.editar') && (
+                          <>
+                            <button type="button" className="btn btn-sm" onClick={() => void openEdit(r)}>
+                              Editar
+                            </button>
+                            <button type="button" className="btn btn-sm" onClick={() => setToggling(r)}>
+                              {r.archived ? 'Restaurar' : 'Archivar'}
+                            </button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setDeleting(r)}>
+                              Borrar
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -173,6 +249,41 @@ export function Inventory() {
         </Card>
       )}
       {history && <HistoryModal row={history} onClose={() => setHistory(null)} />}
+      {editing && (
+        <ProductEditModal
+          product={editing}
+          categories={categories}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            res.reload();
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="Borrar producto"
+          message={`${deleting.productName}: se quita del Inventario, del Catálogo y de la caja (todas sus variantes y sucursales). NO se pierde la información: las ventas, tickets y movimientos antiguos conservan su nombre y el producto queda en el Historial de borrados, donde puedes restaurarlo cuando quieras.`}
+          confirmLabel="Borrar"
+          busy={busy}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => void doDelete()}
+        />
+      )}
+      {toggling && (
+        <ConfirmDialog
+          title={toggling.archived ? 'Restaurar producto' : 'Archivar producto'}
+          message={
+            toggling.archived
+              ? `${toggling.productName}: Restaurar hace que el producto vuelva a aparecer para vender (caja, escáner y búsquedas). Su historial y existencias no cambian.`
+              : `${toggling.productName}: Archivar NO borra nada: el producto y todo su historial de ventas se conservan y las existencias quedan tal cual. Lo que cambia es que deja de aparecer para vender (caja, escáner y búsquedas). Puedes restaurarlo cuando quieras desde la web: Inventario → Mostrar archivados → Restaurar.`
+          }
+          confirmLabel={toggling.archived ? 'Restaurar' : 'Archivar'}
+          busy={busy}
+          onCancel={() => setToggling(null)}
+          onConfirm={() => void toggleArchive()}
+        />
+      )}
     </>
   );
 }

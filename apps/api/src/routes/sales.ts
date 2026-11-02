@@ -14,6 +14,7 @@ import { adjustmentView, saleView, toTodaySaleSummary } from '../serialize.ts';
 import { applySyncOp } from '../sync-apply.ts';
 import { createMongoSyncRepo } from '../sync-repo.ts';
 import { canSeeCosts, dayRangeIso, dayStr, isoRangeFilter, pageQuery, rejectionToHttp, sessionUser } from '../util.ts';
+import { terminalAllowsBranch } from '../terminals.ts';
 
 export const salesRouter = Router();
 const repo = createMongoSyncRepo();
@@ -109,8 +110,8 @@ salesRouter.get(
 /** Caja de la que sale el dinero de una cancelación/devolución hecha desde la web. */
 async function pickCashSession(branchId: string, terminalId?: string): Promise<{ sessionId: string | null; terminalId: string }> {
   if (terminalId) {
-    const t = await col('terminals').findOne({ _id: terminalId }, { projection: { branchId: 1 } });
-    if (!t || t.branchId !== branchId) throw new HttpError(400, 'La terminal no pertenece a la sucursal de la venta');
+    const t = await col('terminals').findOne({ _id: terminalId }, { projection: { branchId: 1, branchIds: 1 } });
+    if (!t || !terminalAllowsBranch(t as any, branchId)) throw new HttpError(400, 'La terminal no pertenece a la sucursal de la venta');
     const s = await col('cash_sessions').findOne({ terminalId, status: 'abierta' }, { projection: { _id: 1 } });
     return { sessionId: s?._id ?? null, terminalId };
   }

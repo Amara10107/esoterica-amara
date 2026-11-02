@@ -22,6 +22,8 @@ export const COLLECTIONS = [
   'audit_log', 'settings', 'backups_log', 'dashboard_prefs', 'counters',
   // v2
   'security_tokens', 'security_token_uses', 'security_verifications',
+  // v2.3
+  'advances', 'advance_entries', 'period_cuts',
 ] as const;
 
 export async function connect(): Promise<Db> {
@@ -70,6 +72,9 @@ export async function ensureIndexes(): Promise<void> {
       [{ branchId: 1, openedAt: -1 }],
     ]),
     idx('cash_movements', [[{ sessionId: 1 }]]),
+    idx('advances', [[{ branchId: 1, createdAt: -1 }], [{ code: 1 }]]),
+    idx('advance_entries', [[{ advanceId: 1, createdAt: 1 }]]),
+    idx('period_cuts', [[{ createdAt: -1 }]]),
     idx('grants', [[{ sellerId: 1, branchId: 1, expiresAt: 1 }]]),
     idx('sync_events', [[{ receivedAt: -1 }], [{ terminalId: 1 }], [{ status: 1, receivedAt: 1 }]]),
     idx('sync_conflicts', [[{ status: 1, createdAt: -1 }], [{ branchId: 1, status: 1 }]]),

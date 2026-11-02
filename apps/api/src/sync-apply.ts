@@ -34,6 +34,8 @@ import type {
   ActionAuthorization,
   CachedSecurityToken,
   CashBreakdown,
+  Advance,
+  AdvanceEntry,
   CashMovement,
   ComputedSale,
   Grant,
@@ -47,6 +49,8 @@ import type {
 } from '@amara/shared';
 import type { ZodError } from 'zod';
 import {
+  advanceCreatePayload,
+  advanceEntryPayload,
   cashClosePayload,
   cashMovementPayload,
   cashOpenPayload,
@@ -56,6 +60,7 @@ import {
 } from './sync-payloads.ts';
 import { deltaMatchesType } from './stock-math.ts';
 import { checkAuthorization } from './security.ts';
+import { terminalAllowsBranch } from './terminals.ts';
 import type { AuthzResult } from './security.ts';
 
 // ───────────────────────────── Contratos de datos ─────────────────────────────
@@ -73,6 +78,8 @@ export interface UserRec {
 export interface TerminalRec {
   id: string;
   branchId: string;
+  /** v2.1: sucursales adicionales donde la terminal puede trabajar. */
+  branchIds?: string[];
   code: string;
 }
 export interface VariantRec {
@@ -191,6 +198,10 @@ export interface SyncRepo {
   getCashSession(id: string): Promise<CashSessionRec | null>;
   insertCashSession(s: CashSessionRec): Promise<'inserted' | 'exists' | 'terminal_busy'>;
   insertCashMovement(m: CashMovement & { receivedAt: string; syncOpId: string }): Promise<boolean>;
+  /** v2.3: anticipos de limpias (solo se agregan movimientos). */
+  getAdvance(id: string): Promise<Advance | null>;
+  insertAdvance(a: Advance & { receivedAt: string; syncOpId: string }): Promise<boolean>;
+  insertAdvanceEntry(e: AdvanceEntry & { receivedAt: string; syncOpId: string }): Promise<boolean>;
   cashDataForSession(sessionId: string): Promise<CashData>;
   closeCashSession(sessionId: string, patch: Record<string, unknown>): Promise<boolean>;
 
@@ -202,7 +213,7 @@ export interface ApplyContext {
   now: () => Date;
   source: SyncSource;
   /** Token de terminal usado en la petición: toda operación debe pertenecer a esta terminal. */
-  terminal?: { id: string; branchId: string };
+  terminal?: { id: string; branchId: string; branchIds?: string[] };
   /** Sesión de usuario usada en la petición (source = 'usuario'): la operación debe ser de ese usuario. */
   sessionUserId?: string;
 }
@@ -251,7 +262,7 @@ export async function applySyncOp(repo: SyncRepo, op: SyncOp, ctx: ApplyContext)
   const receivedAt = ctx.now().toISOString();
 
   // Pertenencia de la operación al dispositivo/usuario autenticado en la petición.
-  if (ctx.terminal && (op.terminalId !== ctx.terminal.id || op.branchId !== ctx.terminal.branchId)) {
+  if (ctx.terminal && (op.terminalId !== ctx.terminal.id || !terminalAllowsBranch(ctx.terminal, op.branchId))) {
     await repo.audit({
       id: `${op.opId}:terminal_ajena`, at: receivedAt, userId: op.userId, action: 'sync.operacion_ajena',
       entity: 'sync_op', entityId: op.opId, branchId: op.branchId, terminalId: ctx.terminal.id,
@@ -345,6 +356,10 @@ async function dispatch(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): Promise<
       return handleCashMovement(repo, op, ctx);
     case 'cash.close':
       return handleCashClose(repo, op, ctx);
+    case 'advance.create':
+      return handleAdvanceCreate(repo, op, ctx);
+    case 'advance.entry':
+      return handleAdvanceEntry(repo, op, ctx);
     default:
       return reject('tipo_desconocido', `Tipo de operación no soportado: ${String((op as SyncOp).type)}`);
   }
@@ -362,7 +377,7 @@ async function loadActor(repo: SyncRepo, op: SyncOp, branchId: string): Promise<
 const needsAuthorization = (role: Role, perm: Parameters<typeof can>[1]) => !can(role, perm) && role === 'vendedor';
 
 /** Valida la autorización declarada con las reglas del servidor, a la hora local (nunca futura) de la operación. */
-function verifyAuthorization(repo: SyncRepo, raw: unknown, op: SyncOp, ctx: ApplyContext, purpose: 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias', branchId: string): Promise<AuthzResult> {
+function verifyAuthorization(repo: SyncRepo, raw: unknown, op: SyncOp, ctx: ApplyContext, purpose: 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias' | 'escaner' | 'descuento' | 'apertura_caja' | 'retiro_caja', branchId: string): Promise<AuthzResult> {
   const at = minIso(op.localTs, ctx.now().toISOString());
   return checkAuthorization(repo, raw, { purpose, branchId, userId: op.userId, opId: op.opId, atIso: at });
 }
@@ -421,9 +436,6 @@ async function handleSaleCreate(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): 
 
   const acc = new Acc();
   if (!user.active) acc.add('usuario_inactivo', `${user.name} está inactivo en el servidor (la venta ya ocurrió)`);
-  if (sale.discountCents > 0 && !can(user.role, 'ventas.descuento')) {
-    acc.add('descuento_sin_permiso', `${user.name} (${user.role}) aplicó descuento de ${sale.discountCents} centavos sin permiso`);
-  }
   if (Date.parse(sale.createdAt) > ctx.now().getTime() + FUTURE_TOLERANCE_MS) {
     acc.add('hora_futura', `La hora de la venta (${sale.createdAt}) está en el futuro: revisar reloj de la terminal`);
   }
@@ -441,6 +453,18 @@ async function handleSaleCreate(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): 
 
   await repo.insertSale({ ...sale, status: 'completada', receivedAt: ctx.now().toISOString(), syncOpId: op.opId, source: ctx.source });
   if (limpiaCheck) await settleAuthorization(repo, acc, limpiaCheck, op, ctx, 'limpias', 'sale', sale.id, sale.branchId);
+
+  // v2.1: descuento. El gerente lo da libremente; un vendedor necesita contraseña de admin o token 'descuento'.
+  const hasDiscount = sale.discountCents > 0 || sale.items.some((i) => i.lineDiscountCents > 0);
+  if (hasDiscount && !isLimpia && !can(user.role, 'ventas.descuento')) {
+    if (user.role !== 'vendedor') acc.add('descuento_sin_permiso', `${user.name} (${user.role}) aplicó descuento sin permiso`);
+    else {
+      const dc = await verifyAuthorization(repo, parsed.data.authorization, op, ctx, 'descuento', sale.branchId);
+      await settleAuthorization(repo, acc, dc, op, ctx, 'descuento', 'sale', sale.id, sale.branchId);
+    }
+  } else if (hasDiscount && isLimpia && !can(user.role, 'ventas.descuento')) {
+    acc.add('descuento_sin_permiso', `${user.name} aplicó descuento en Limpias sin ser administrador`);
+  }
 
   const negatives: string[] = [];
   const unknown: string[] = [];
@@ -642,7 +666,7 @@ async function handleCashOpen(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): Pr
   if (!can(actor.user.role, 'caja.abrir')) return reject('sin_permiso', `${actor.user.name} no puede abrir caja`);
   const terminal = await repo.getTerminal(s.terminalId);
   if (!terminal) return reject('terminal_desconocida', 'La terminal de la sesión no existe en el servidor');
-  if (terminal.branchId !== s.branchId) return reject('payload_inconsistente', 'La terminal pertenece a otra sucursal');
+  if (!terminalAllowsBranch(terminal, s.branchId)) return reject('payload_inconsistente', 'La terminal no está autorizada en esa sucursal');
 
   const acc = new Acc();
   const rec: CashSessionRec = { id: s.id, branchId: s.branchId, terminalId: s.terminalId, openedBy: s.openedBy, openedAt: s.openedAt, openingCents: s.openingCents, status: 'abierta' };
@@ -670,18 +694,84 @@ async function handleCashMovement(repo: SyncRepo, op: SyncOp, ctx: ApplyContext)
   if (session.branchId !== op.branchId) return reject('payload_inconsistente', 'La sesión de caja es de otra sucursal');
   const actor = await loadActor(repo, op, session.branchId);
   if ('fail' in actor) return actor.fail;
-  if (!can(actor.user.role, 'caja.movimientos')) return reject('sin_permiso', `${actor.user.name} no puede registrar movimientos de caja`);
+  // v2.3. Sacar dinero (retiro/gasto): el gerente por sí mismo; el vendedor con autorización (contraseña de admin o token 'retiro_caja').
+  // Meter dinero (entrada): el gerente, o cualquiera si es el abono de un anticipo de limpia que existe en el servidor.
+  let needsAuthz = false;
+  if (m.type === 'entrada') {
+    if (m.advanceId) {
+      if (!can(actor.user.role, 'ventas.crear')) return reject('sin_permiso', `${actor.user.name} no puede registrar movimientos de caja`);
+      if (!(await repo.getAdvance(m.advanceId))) return reject('anticipo_no_encontrado', 'El anticipo de esta entrada de efectivo no existe en el servidor');
+    } else if (!can(actor.user.role, 'caja.movimientos')) {
+      return reject('sin_permiso', `${actor.user.name} no puede registrar entradas de efectivo`);
+    }
+  } else if (!can(actor.user.role, 'caja.movimientos')) {
+    if (!needsAuthorization(actor.user.role, 'caja.movimientos')) return reject('sin_permiso', `${actor.user.name} no puede sacar dinero de la caja`);
+    needsAuthz = true;
+  }
 
   const acc = new Acc();
   if (session.status === 'cerrada' && session.closedAt && m.createdAt > session.closedAt) {
     acc.add('movimiento_tras_corte', 'El movimiento es posterior al corte de su sesión de caja');
   }
   await repo.insertCashMovement({ ...m, receivedAt: ctx.now().toISOString(), syncOpId: op.opId });
+  if (needsAuthz) {
+    // El dinero ya salió físicamente: el movimiento se aplica siempre; si la autorización no vale, queda un conflicto para el gerente.
+    if (parsed.data.authorization === undefined || parsed.data.authorization === null) {
+      acc.add('autorizacion_invalida', `${actor.user.name} sacó dinero de la caja (${m.concept}) sin autorización de un administrador`);
+    } else {
+      const authz = await verifyAuthorization(repo, parsed.data.authorization, op, ctx, 'retiro_caja', session.branchId);
+      await settleAuthorization(repo, acc, authz, op, ctx, 'retiro_caja', 'cash_session', session.id, session.branchId);
+    }
+  }
   await repo.audit({
     id: `${op.opId}:caja_mov`, at: ctx.now().toISOString(), userId: m.userId, action: `caja.${m.type}`, entity: 'cash_session', entityId: session.id,
     branchId: session.branchId, terminalId: op.terminalId, detail: { amountCents: m.amountCents, concept: m.concept },
   });
   return acc.done();
+}
+
+async function handleAdvanceCreate(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): Promise<Outcome> {
+  const parsed = advanceCreatePayload.safeParse(op.payload);
+  if (!parsed.success) return reject('payload_invalido', zodMsg(parsed.error));
+  const { advance, entry } = parsed.data;
+  if (advance.createdBy !== op.userId || entry.userId !== op.userId) return reject('payload_inconsistente', 'El anticipo no coincide con el usuario de la operación');
+  if (advance.branchId !== op.branchId) return reject('payload_inconsistente', 'El anticipo es de otra sucursal');
+  if (entry.advanceId !== advance.id || entry.kind !== 'abono' || entry.amountCents <= 0) return reject('payload_inconsistente', 'El primer movimiento de un anticipo debe ser un abono');
+  const actor = await loadActor(repo, op, advance.branchId);
+  if ('fail' in actor) return actor.fail;
+  if (!can(actor.user.role, 'ventas.crear')) return reject('sin_permiso', `${actor.user.name} no puede recibir anticipos`);
+  const receivedAt = ctx.now().toISOString();
+  await repo.insertAdvance({ ...advance, clientPhone: advance.clientPhone ?? null, receivedAt, syncOpId: op.opId });
+  await repo.insertAdvanceEntry({ ...entry, method: entry.method ?? null, cashSessionId: entry.cashSessionId ?? null, receivedAt, syncOpId: op.opId });
+  await repo.audit({
+    id: `${op.opId}:anticipo`, at: receivedAt, userId: op.userId, action: 'anticipo.crear', entity: 'advance', entityId: advance.id,
+    branchId: advance.branchId, terminalId: op.terminalId, detail: { code: advance.code, clientName: advance.clientName, amountCents: entry.amountCents, method: entry.method ?? null },
+  });
+  return new Acc().done();
+}
+
+async function handleAdvanceEntry(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): Promise<Outcome> {
+  const parsed = advanceEntryPayload.safeParse(op.payload);
+  if (!parsed.success) return reject('payload_invalido', zodMsg(parsed.error));
+  const { entry } = parsed.data;
+  if (entry.userId !== op.userId) return reject('payload_inconsistente', 'El movimiento del anticipo no coincide con el usuario de la operación');
+  const adv = await repo.getAdvance(entry.advanceId);
+  if (!adv) return reject('anticipo_no_encontrado', 'El anticipo no existe en el servidor');
+  if (adv.branchId !== op.branchId) return reject('payload_inconsistente', 'El anticipo es de otra sucursal');
+  const money = entry.kind === 'abono' || entry.kind === 'uso';
+  if (money ? entry.amountCents <= 0 : entry.amountCents !== 0) return reject('payload_inconsistente', 'Importe inválido para este tipo de movimiento');
+  if (entry.kind === 'uso' && entry.note.trim().length < 3) return reject('payload_inconsistente', 'Falta decir en qué se utilizó el dinero');
+  const actor = await loadActor(repo, op, adv.branchId);
+  if ('fail' in actor) return actor.fail;
+  // Solo el administrador agrega abonos, registra usos, cierra o reabre un anticipo.
+  if (actor.user.role !== 'gerente') return reject('sin_permiso', `${actor.user.name} no puede modificar anticipos (solo el administrador)`);
+  const receivedAt = ctx.now().toISOString();
+  await repo.insertAdvanceEntry({ ...entry, method: entry.method ?? null, cashSessionId: entry.cashSessionId ?? null, receivedAt, syncOpId: op.opId });
+  await repo.audit({
+    id: `${op.opId}:anticipo_mov`, at: receivedAt, userId: op.userId, action: `anticipo.${entry.kind}`, entity: 'advance', entityId: adv.id,
+    branchId: adv.branchId, terminalId: op.terminalId, detail: { code: adv.code, amountCents: entry.amountCents, method: entry.method ?? null, note: entry.note },
+  });
+  return new Acc().done();
 }
 
 async function handleCashClose(repo: SyncRepo, op: SyncOp, ctx: ApplyContext): Promise<Outcome> {

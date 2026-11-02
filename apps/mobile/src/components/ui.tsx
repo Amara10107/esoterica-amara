@@ -5,6 +5,8 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +18,7 @@ import type { RefreshControlProps, StyleProp, TextInputProps, TextStyle, ViewSty
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Edge } from 'react-native-safe-area-context';
 import { colors, radius, space } from '../theme';
+import { useKeyboardScroll } from './keyboard';
 
 // ───────────── Pantalla ─────────────
 export function Screen(props: {
@@ -27,15 +30,25 @@ export function Screen(props: {
   contentStyle?: StyleProp<ViewStyle>;
 }) {
   const { children, scroll = true, edges = ['left', 'right', 'bottom'], refreshControl, contentStyle } = props;
+  const kb = useKeyboardScroll();
   return (
     <SafeAreaView style={styles.screen} edges={edges}>
-      {scroll ? (
-        <ScrollView refreshControl={refreshControl} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.content, contentStyle]}>
-          {children}
-        </ScrollView>
-      ) : (
-        <View style={[styles.content, styles.flex, contentStyle]}>{children}</View>
-      )}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
+        {scroll ? (
+          <ScrollView
+            ref={kb.ref}
+            onScroll={kb.onScroll}
+            scrollEventThrottle={32}
+            refreshControl={refreshControl}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[styles.content, contentStyle]}
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={[styles.content, styles.flex, contentStyle]}>{children}</View>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -83,9 +96,9 @@ export function Button(props: {
 
 const buttonStyles: Record<ButtonVariant, { box: ViewStyle; text: string; spinner: string }> = {
   primary: { box: { backgroundColor: colors.goldBright }, text: colors.dark, spinner: colors.dark },
-  secondary: { box: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.borderStrong }, text: colors.dark, spinner: colors.dark },
+  secondary: { box: { backgroundColor: colors.card, borderWidth: 1.5, borderColor: colors.borderStrong }, text: colors.dark, spinner: colors.dark },
   dark: { box: { backgroundColor: colors.dark }, text: colors.white, spinner: colors.white },
-  danger: { box: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.danger }, text: colors.danger, spinner: colors.danger },
+  danger: { box: { backgroundColor: colors.card, borderWidth: 1.5, borderColor: colors.danger }, text: colors.danger, spinner: colors.danger },
 };
 
 // ───────────── Tarjeta, fila, divisor ─────────────
@@ -126,15 +139,31 @@ export function MenuItem({ title, subtitle, onPress, badge }: { title: string; s
 
 // ───────────── Campo de texto ─────────────
 export function Field({ label, hint, error, style, ...input }: { label: string; hint?: string; error?: string | null; style?: StyleProp<ViewStyle> } & TextInputProps) {
+  // v2.2: los campos de contraseña llevan un botón "Ver / Ocultar".
+  const isSecret = !!input.secureTextEntry;
+  const [shown, setShown] = React.useState(false);
+  const field = (
+    <TextInput
+      placeholderTextColor="#8A8A8A"
+      accessibilityLabel={label}
+      {...input}
+      secureTextEntry={isSecret && !shown}
+      style={[styles.input, isSecret ? styles.inputSecret : null, error ? styles.inputError : null, input.multiline ? styles.inputMulti : null]}
+    />
+  );
   return (
     <View style={[styles.field, style]}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        placeholderTextColor="#8A8A8A"
-        accessibilityLabel={label}
-        {...input}
-        style={[styles.input, error ? styles.inputError : null, input.multiline ? styles.inputMulti : null]}
-      />
+      {isSecret ? (
+        <View>
+          {field}
+          <Pressable accessibilityRole="button" accessibilityLabel={shown ? 'Ocultar contraseña' : 'Ver contraseña'} onPress={() => setShown((v) => !v)} style={styles.eye} hitSlop={8}>
+            <Text style={styles.eyeText}>{shown ? 'Ocultar' : 'Ver'}</Text>
+          </Pressable>
+        </View>
+      ) : (
+        field
+      )}
       {error ? <Text style={styles.errorText}>{error}</Text> : hint ? <Text style={styles.muted}>{hint}</Text> : null}
     </View>
   );
@@ -195,8 +224,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
-  h1: { fontSize: 26, fontWeight: '800', color: colors.text },
-  h2: { fontSize: 19, fontWeight: '700', color: colors.text },
+  h1: { fontSize: 26, fontWeight: '800', color: colors.purple },
+  h2: { fontSize: 19, fontWeight: '700', color: colors.purple },
   p: { fontSize: 16, color: colors.text, lineHeight: 22 },
   muted: { fontSize: 14, color: colors.muted, lineHeight: 20 },
   bold: { fontWeight: '800' },
@@ -204,25 +233,28 @@ const styles = StyleSheet.create({
   buttonText: { fontSize: 17, fontWeight: '800', textAlign: 'center' },
   buttonOff: { opacity: 0.45 },
   pressed: { opacity: 0.75 },
-  card: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: space.lg, gap: space.sm },
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: space.lg, gap: space.sm, shadowColor: colors.purple, shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   cardGold: { backgroundColor: colors.goldSoft, borderColor: colors.gold },
   cardDark: { backgroundColor: colors.dark, borderColor: colors.dark },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: space.md },
   rowLabel: { flex: 1, fontSize: 15, color: colors.text },
   rowValue: { fontSize: 15, color: colors.text, textAlign: 'right' },
   divider: { height: 1, backgroundColor: colors.border },
-  menuItem: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.md, paddingHorizontal: space.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white, gap: space.md },
+  menuItem: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.md, paddingHorizontal: space.lg, borderWidth: 1, borderColor: colors.border, borderLeftWidth: 4, borderLeftColor: colors.goldBright, borderRadius: radius.md, backgroundColor: colors.card, gap: space.md },
   menuTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
   chevron: { fontSize: 22, color: colors.gold, fontWeight: '800' },
   badge: { backgroundColor: colors.goldBright, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
   badgeText: { fontWeight: '800', color: colors.dark, fontSize: 13 },
   field: { gap: 6 },
   label: { fontSize: 14, fontWeight: '700', color: colors.text },
-  input: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 17, color: colors.text, backgroundColor: colors.white },
+  input: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 17, color: colors.text, backgroundColor: colors.card },
   inputMulti: { minHeight: 90, paddingTop: space.md, textAlignVertical: 'top' },
   inputError: { borderColor: colors.danger },
+  inputSecret: { paddingRight: 84 },
+  eye: { position: 'absolute', right: 10, top: 0, bottom: 0, justifyContent: 'center' },
+  eyeText: { fontSize: 14, fontWeight: '800', color: colors.purple },
   errorText: { color: colors.danger, fontSize: 14 },
-  chip: { minHeight: 44, paddingHorizontal: space.lg, borderRadius: 22, borderWidth: 1.5, borderColor: colors.border, justifyContent: 'center', backgroundColor: colors.white },
+  chip: { minHeight: 44, paddingHorizontal: space.lg, borderRadius: 22, borderWidth: 1.5, borderColor: colors.border, justifyContent: 'center', backgroundColor: colors.card },
   chipOn: { backgroundColor: colors.dark, borderColor: colors.dark },
   chipText: { fontSize: 15, fontWeight: '700', color: colors.text },
   chipTextOn: { color: colors.white },

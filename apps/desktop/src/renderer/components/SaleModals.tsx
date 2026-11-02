@@ -4,13 +4,14 @@ import type { FormEvent } from 'react';
 import type { CatalogHit } from '@amara/database';
 import { newId } from '@amara/shared';
 import type { Sale } from '@amara/shared';
-import type { SellerRow } from '../../shared/ipc.ts';
+import type { SellerRow, SensitiveAuth } from '../../shared/ipc.ts';
 import { call, errorCode, errorText } from '../lib/api.ts';
 import { stockView, toSaleItems } from '../lib/cart.ts';
 import { money, parsePesos, pesosText } from '../lib/format.ts';
 import { planPayments } from '../lib/payments.ts';
 import type { PaymentDraft } from '../lib/payments.ts';
 import type { CartLine } from '../state/PosState.tsx';
+import { AuthPrompt } from './AuthPrompt.tsx';
 import { Banner, Field } from './Field.tsx';
 import { Modal } from './Modal.tsx';
 
@@ -160,17 +161,21 @@ export function PaymentModal({
 }
 
 export function DiscountModal({
-  subtotalCents, currentCents, onClose, onApply,
+  subtotalCents, currentCents, onClose, onApply, needsAuth = false,
 }: {
-  subtotalCents: number; currentCents: number; onClose: () => void; onApply: (cents: number) => void;
+  subtotalCents: number; currentCents: number; onClose: () => void;
+  /** `ticket` solo viene cuando el vendedor autorizó con contraseña de admin o token 'descuento'. */
+  onApply: (cents: number, ticket?: string) => void;
+  needsAuth?: boolean;
 }) {
+  const [auth, setAuth] = useState<SensitiveAuth | null>(null);
   const [mode, setMode] = useState<'monto' | 'porcentaje'>('monto');
   const [value, setValue] = useState(currentCents > 0 ? pesosText(currentCents) : '');
   const n = parsePesos(value);
   let cents: number | null = null;
   if (n !== null && !Number.isNaN(n)) cents = mode === 'monto' ? n : Math.round((subtotalCents * n) / 10000);
   const tooBig = cents !== null && cents > subtotalCents;
-  const valid = cents !== null && !tooBig;
+  const valid = cents !== null && !tooBig && (!needsAuth || !!auth?.ticket);
 
   return (
     <Modal
@@ -182,7 +187,7 @@ export function DiscountModal({
         <>
           {currentCents > 0 && <button className="btn" onClick={() => onApply(0)}>Quitar descuento</button>}
           <button className="btn" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-gold" disabled={!valid} onClick={() => valid && onApply(cents as number)}>Aplicar</button>
+          <button className="btn btn-gold" disabled={!valid} onClick={() => valid && onApply(cents as number, needsAuth ? auth?.ticket : undefined)}>Aplicar</button>
         </>
       }
     >
@@ -194,6 +199,12 @@ export function DiscountModal({
         <Field label={mode === 'monto' ? 'Descuento en pesos' : 'Descuento en porcentaje'} error={tooBig ? 'No puede ser mayor al subtotal' : n !== null && Number.isNaN(n) ? 'Valor no válido' : null}>
           <input className="inp inp-lg" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
         </Field>
+        {needsAuth && (
+          <div className="stack">
+            <div className="muted small">Para dar un descuento un administrador escribe su contraseña, o usa un token de seguridad para Descuentos.</div>
+            <AuthPrompt purpose="descuento" onChange={setAuth} />
+          </div>
+        )}
         <div className="preview">
           Subtotal {money(subtotalCents)} - Descuento {money(valid ? (cents as number) : 0)} = <strong>{money(subtotalCents - (valid ? (cents as number) : 0))}</strong>
         </div>

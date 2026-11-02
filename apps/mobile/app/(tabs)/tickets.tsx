@@ -115,10 +115,10 @@ export default function Tickets() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   top: { padding: space.lg, gap: space.sm },
-  search: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 16, color: colors.text, backgroundColor: colors.white },
+  search: { minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, fontSize: 16, color: colors.text, backgroundColor: colors.card },
   list: { paddingHorizontal: space.lg, paddingBottom: 32, gap: space.sm },
   empty: { textAlign: 'center', margin: 24 },
-  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  item: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, minHeight: 72, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   folio: { fontSize: 15, fontWeight: '800', color: colors.text },
   sub: { fontSize: 13, color: colors.muted },
   total: { fontSize: 17, fontWeight: '900', color: colors.text },

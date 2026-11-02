@@ -35,6 +35,7 @@ export default function Limpias() {
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<CatalogHit[]>([]);
   const [serviceText, setServiceText] = useState('');
+  const [discountText, setDiscountText] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('efectivo');
   const [tenderedText, setTenderedText] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
@@ -61,7 +62,12 @@ export default function Limpias() {
   if (!store || !device || !actor || !terminal || !session) return <Loading />;
 
   const serviceCents = serviceText.trim() === '' ? 0 : parseMoneyInput(serviceText);
-  const total = serviceCents === null ? 0 : limpiaTotalCents(articles, serviceCents);
+  const subtotal = serviceCents === null ? 0 : limpiaTotalCents(articles, serviceCents);
+  // Descuento en Limpias: solo el administrador.
+  const discountParsed = discountText.trim() === '' ? 0 : parseMoneyInput(discountText);
+  const discountBad = discountParsed === null || discountParsed > subtotal;
+  const discountCents = isManager && !discountBad ? (discountParsed ?? 0) : 0;
+  const total = subtotal - discountCents;
 
   function addArticle(h: CatalogHit) {
     const r = addLimpiaArticle(articles, { variantId: h.variantId, name: h.productName, label: h.label, priceCents: h.priceCents, available: shownQty(h.qty) });
@@ -76,6 +82,7 @@ export default function Limpias() {
     setError(null);
     if (articles.length === 0) return setError('Agrega al menos un artículo a la limpia.');
     if (serviceCents === null) return setError('El cargo por servicio no es un monto válido.');
+    if (discountBad && isManager) return setError('El descuento no es válido (no puede ser mayor al subtotal).');
     if (total <= 0) return setError('El total debe ser mayor a cero.');
     const tendered = method === 'efectivo' && tenderedText.trim() !== '' ? parseMoneyInput(tenderedText) : total;
     if (tendered === null || tendered < total) return setError('El efectivo recibido debe cubrir el total.');
@@ -96,6 +103,7 @@ export default function Limpias() {
         terminalId: terminal.terminalId,
         type: 'limpia',
         items: limpiaSaleItems(articles, serviceCents ?? 0),
+        ...(discountCents > 0 ? { discountCents } : {}),
         payments: [method === 'efectivo' ? { method, amountCents: total, tenderedCents: tendered ?? total } : { method, amountCents: total }],
         sellerId: session.user.id,
         sellerName: session.user.name,
@@ -104,6 +112,7 @@ export default function Limpias() {
       setDone(r.sale);
       setArticles([]);
       setServiceText('');
+      setDiscountText('');
       setTenderedText('');
       setSaleId(newId());
       app.notifyDataChanged();
@@ -183,7 +192,9 @@ export default function Limpias() {
       <Card>
         <H2>Servicio y pago</H2>
         <Field label="Cargo por servicio (opcional)" value={serviceText} onChangeText={setServiceText} keyboardType="decimal-pad" placeholder="0.00" error={serviceCents === null ? 'Monto no válido' : null} />
+        {isManager ? <Field label="Descuento ($, opcional)" value={discountText} onChangeText={setDiscountText} keyboardType="decimal-pad" placeholder="0.00" error={discountBad ? 'Descuento no válido' : null} /> : null}
         <Divider />
+        {discountCents > 0 ? <Row label="Descuento" value={`-${formatMXN(discountCents)}`} /> : null}
         <Row label="TOTAL" value={formatMXN(total)} strong />
         <ChipRow>
           {METHODS.map((m) => (
@@ -217,6 +228,6 @@ const styles = StyleSheet.create({
   step: { width: 44, height: 44, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   stepText: { fontSize: 22, fontWeight: '800', color: colors.text },
   qty: { minWidth: 26, textAlign: 'center', fontSize: 18, fontWeight: '900', color: colors.text },
-  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   plus: { fontSize: 28, fontWeight: '800', color: colors.gold, paddingHorizontal: space.sm },
 });

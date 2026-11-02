@@ -11,8 +11,10 @@ export interface CartLine {
   label: string;
   unitPriceCents: number;
   qty: number;
-  /** v2. Categoría del producto (decide si admite el botón "Extra"). */
+  /** v2. Categoría del producto. */
   category?: string;
+  /** v2.1. Tipo de producto ("vela"...): decide qué extras se ofrecen. */
+  ptype?: string;
   /** v2. Existencia disponible conocida al agregar (nunca negativa). Sin dato = no se valida en pantalla (el almacén igual valida). */
   available?: number;
 }
@@ -25,6 +27,8 @@ export interface CartExtra {
   label: string;
   amountCents: number;
   note: string;
+  /** v2.1. Id del extra del catálogo (el precio sale de ahí y el vendedor no lo puede cambiar). */
+  extraId?: string;
 }
 
 export interface Cart {
@@ -43,6 +47,7 @@ export interface CartItemInfo {
   label: string;
   priceCents: number;
   category?: string;
+  type?: string;
   /** Existencia del catálogo local (CatalogHit.qty). Puede venir negativa (heredada): se trata como 0. */
   qty?: number;
 }
@@ -95,6 +100,7 @@ export function addToCart(cart: Cart, item: CartItemInfo, qty = 1): Cart {
   }
   const line: CartLine = { variantId: item.variantId, productName: item.productName, label: item.label, unitPriceCents: item.priceCents, qty };
   if (item.category !== undefined) line.category = item.category;
+  if (item.type !== undefined) line.ptype = item.type;
   if (item.qty !== undefined) line.available = sellableQty(item.qty);
   return { ...cart, lines: [...cart.lines, line] };
 }
@@ -127,10 +133,10 @@ export function cartIsEmpty(cart: Cart): boolean {
 }
 
 /** Líneas para LocalStore.registerSale: productos normales y extras (kind 'extra', qty 1, monto en unitPriceCents). */
-export function toSaleItems(cart: Cart): { variantId: string; qty: number; kind?: 'extra'; unitPriceCents?: number; extraNote?: string }[] {
+export function toSaleItems(cart: Cart): { variantId: string; qty: number; kind?: 'extra'; unitPriceCents?: number; extraNote?: string; extraId?: string }[] {
   return [
     ...cart.lines.map((l) => ({ variantId: l.variantId, qty: l.qty })),
-    ...(cart.extras ?? []).map((e) => ({ variantId: e.variantId, qty: 1, kind: 'extra' as const, unitPriceCents: e.amountCents, extraNote: e.note })),
+    ...(cart.extras ?? []).map((e) => ({ variantId: e.variantId, qty: 1, kind: 'extra' as const, unitPriceCents: e.amountCents, extraNote: e.note, ...(e.extraId ? { extraId: e.extraId } : {}) })),
   ];
 }
 
@@ -142,7 +148,7 @@ export function cartUnits(cart: Cart): number {
 export interface CartDraft {
   saleId: string;
   lines: { variantId: string; qty: number }[];
-  /** v2. Los extras guardan su monto y nota (los escribió la persona, no vienen del catálogo). */
+  /** v2.1. Los extras guardan su id de catálogo, nombre y precio (el almacén los vuelve a validar al vender). */
   extras?: CartExtra[];
 }
 
@@ -161,7 +167,7 @@ export function parseDraft(raw: string | null | undefined): CartDraft | null {
     const extras = Array.isArray(v.extras)
       ? v.extras.filter(
           (e): e is CartExtra =>
-            !!e && typeof e.id === 'string' && typeof e.variantId === 'string' && typeof e.productName === 'string' && typeof e.label === 'string' && Number.isInteger(e.amountCents) && e.amountCents > 0 && typeof e.note === 'string',
+            !!e && typeof e.id === 'string' && typeof e.variantId === 'string' && typeof e.productName === 'string' && typeof e.label === 'string' && Number.isInteger(e.amountCents) && e.amountCents >= 0 && typeof e.note === 'string' && typeof e.extraId === 'string',
         )
       : [];
     return extras.length > 0 ? { saleId: v.saleId, lines, extras } : { saleId: v.saleId, lines };

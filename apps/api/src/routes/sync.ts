@@ -11,6 +11,7 @@ import { buildPullPayload } from '../pull.ts';
 import { applySyncOp } from '../sync-apply.ts';
 import type { ApplyContext } from '../sync-apply.ts';
 import { createMongoSyncRepo } from '../sync-repo.ts';
+import { terminalAllowsBranch } from '../terminals.ts';
 
 export const syncRouter = Router();
 const repo = createMongoSyncRepo();
@@ -57,8 +58,8 @@ syncRouter.get(
     const q = parse(z.object({ branchId: z.string().min(1).optional(), since: isoDate.optional() }), req.query);
     let branchId: string;
     if (req.terminal) {
-      branchId = req.terminal.branchId;
-      if (q.branchId && q.branchId !== branchId) throw new HttpError(403, 'El token de terminal solo accede a su sucursal');
+      branchId = q.branchId ?? req.terminal.branchId;
+      if (!terminalAllowsBranch(req.terminal, branchId)) throw new HttpError(403, 'Esta terminal no está autorizada en esa sucursal. Pide al administrador agregarla (Sucursales → Terminales → Editar).');
     } else if (req.user) {
       assertUserMaySync(req.user);
       if (!q.branchId) throw new HttpError(400, 'Falta branchId');

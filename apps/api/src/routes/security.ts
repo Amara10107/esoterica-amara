@@ -58,11 +58,13 @@ securityRouter.get(
   requirePerm('config.editar'),
   ah(async (req, res) => {
     const me = sessionUser(req);
-    const q = parse(z.object({ status: z.enum(['vigente', 'vencido', 'revocado', 'agotado', 'pendiente']).optional(), limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query);
+    const q = parse(z.object({ status: z.enum(['vigente', 'vencido', 'revocado', 'agotado', 'pendiente']).optional(), hidden: z.enum(['1', '0']).optional(), limit: z.coerce.number().int().min(1).max(500).default(200) }), req.query);
     // Del gerente: los de sus sucursales y los generales (sin sucursal).
     const docs = await col('security_tokens').find({ branchId: { $in: [...me.branchIds, null] } }).sort({ createdAt: -1 }).limit(q.limit).toArray();
     const nowIso = new Date().toISOString();
-    let items = docs.map((d) => tokenView(d as any, nowIso));
+    // v2.4.5: los borrados solo salen en el historial.
+    const visible = docs.filter((d: any) => (q.hidden === '1' ? d.hidden === true : d.hidden !== true));
+    let items = visible.map((d) => tokenView(d as any, nowIso));
     if (q.status) items = items.filter((t) => t.status === q.status);
     res.json({ items });
   }),
@@ -83,6 +85,25 @@ securityRouter.post(
       await audit({ userId: me.id, action: 'token.revocar', entity: 'security_token', entityId: t._id as any, branchId: t.branchId ?? null, detail: { label: t.label } });
     }
     res.json({ ok: true, token: tokenView((await col('security_tokens').findOne({ _id: t._id })) as any, nowIso) });
+  }),
+);
+
+/** v2.4.5. Borrar un token = mandarlo al historial (no se elimina). Solo si ya no sirve (vencido, revocado o agotado). */
+securityRouter.post(
+  '/tokens/:id/hide',
+  requireUser,
+  requirePerm('config.editar'),
+  ah(async (req, res) => {
+    const me = sessionUser(req);
+    const body = parse(z.object({ hidden: z.boolean().default(true) }), req.body ?? {});
+    const t = await col('security_tokens').findOne({ _id: req.params.id! as any });
+    if (!t) throw new HttpError(404, 'Token no encontrado');
+    if (t.branchId) assertBranch(me, t.branchId);
+    const nowIso = new Date().toISOString();
+    if (body.hidden && ['vigente', 'pendiente'].includes(tokenView(t as any, nowIso).status)) throw new HttpError(409, 'Ese token sigue vigente. Primero revócalo y después podrás borrarlo.');
+    await col('security_tokens').updateOne({ _id: t._id }, { $set: body.hidden ? { hidden: true, hiddenAt: nowIso, hiddenBy: me.id } : { hidden: false } });
+    await audit({ userId: me.id, action: body.hidden ? 'token.borrar' : 'token.restaurar', entity: 'security_token', entityId: t._id as any, branchId: t.branchId ?? null, detail: { label: t.label } });
+    res.json({ ok: true });
   }),
 );
 

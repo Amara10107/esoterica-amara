@@ -140,11 +140,11 @@ describe('validaciones del servidor', () => {
     expect((await apply(repo, saleOp(makeSale()))).conflictKind).toBe('sin_acceso_sucursal');
   });
 
-  it('descuento de un vendedor se aplica pero queda marcado', async () => {
+  it('descuento de un vendedor sin contraseña de admin ni token se aplica pero queda marcado', async () => {
     const repo = seedRepo();
     const r = await apply(repo, saleOp(makeSale({ qty: 2, discount: 1000 })));
     expect(r.status).toBe('conflict');
-    expect(repo.conflictKinds()).toContain('descuento_sin_permiso');
+    expect(repo.conflictKinds()).toContain('autorizacion_invalida');
     expect(repo.sales.size).toBe(1);
   });
 
@@ -421,9 +421,9 @@ describe('caja', () => {
     expect(repo.sessions.get('ses-0001')!.status).toBe('abierta');
   });
 
-  it('un vendedor no abre caja ni registra movimientos', async () => {
+  it('un desarrollador no abre caja; el vendedor sí', async () => {
     const repo = seedRepo();
-    expect((await apply(repo, openOp({}, VEN))).conflictKind).toBe('sin_permiso');
+    expect((await apply(repo, openOp({}, DEV))).conflictKind).toBe('sin_permiso');
   });
 
   it('terminal desconocida en cash.open se rechaza', async () => {

@@ -10,15 +10,16 @@
  *  - El id del movimiento se genera al abrir el formulario: un reintento no duplica.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { newId } from '@amara/shared';
+import { formatMxDateTime, newId } from '@amara/shared';
 import { StoreError } from '@amara/database';
 import type { CatalogHit } from '@amara/database';
 import { Banner, Button, Chip, ChipRow, Field, H1, H2, Muted, P } from './ui';
 import { colors, space } from '../theme';
 import { useApp } from '../state/AppContext';
 import { loadEntryAccess } from '../services/entry';
+import { useKeyboardScroll } from './keyboard';
 import type { EntryAccess } from '../lib/entry-guard';
 import { parseIntInput } from '../lib/money-input';
 
@@ -50,8 +51,8 @@ export function MovementModal(props: {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          {visible && hit ? <MovementForm key={hit.variantId} hit={hit} initialType={initialType} onClose={onClose} onDone={onDone} /> : null}
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
+          {visible && hit ? <MovementForm key={`${hit.variantId}:${initialType ?? ''}`} hit={hit} initialType={initialType} onClose={onClose} onDone={onDone} /> : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
@@ -152,7 +153,10 @@ function MovementForm({ hit, initialType, onClose, onDone }: { hit: CatalogHit; 
       });
       notifyDataChanged();
       const label = `${selected.productName} ${selected.label}`.trim();
-      onDone(`${TYPE_LABEL[type]} registrada: ${label}. ${r.delta >= 0 ? '+' : ''}${r.delta}. Existencia local ahora: ${r.newQty}.${r.duplicate ? ' (ya estaba registrada)' : ''}`);
+      const who = actor.userName;
+      const before = r.newQty - r.delta;
+      const verb = type === 'entrada' ? 'Agregó' : type === 'salida' ? 'Sacó' : type === 'conteo' ? 'Contó y corrigió' : 'Ajustó';
+      onDone(`${TYPE_LABEL[type]} registrada: ${label}. Existencia ${before} → ${r.newQty} (${r.delta >= 0 ? '+' : ''}${r.delta}). ${verb}: ${who}, motivo «${reason.trim()}», ${formatMxDateTime(new Date().toISOString())}.${r.duplicate ? ' (ya estaba registrada)' : ''}`);
     } catch (e) {
       setError(e instanceof StoreError || e instanceof Error ? e.message : 'No se pudo guardar el movimiento.');
     } finally {
@@ -160,8 +164,9 @@ function MovementForm({ hit, initialType, onClose, onDone }: { hit: CatalogHit; 
     }
   }
 
+  const kb = useKeyboardScroll();
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={kb.ref} onScroll={kb.onScroll} scrollEventThrottle={32} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <H1>Movimiento de inventario</H1>
       <View style={styles.summary}>
         <H2>{selected.productName}</H2>

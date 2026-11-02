@@ -14,6 +14,7 @@ import { PURPOSE_LABEL } from '../../shared/token-form.ts';
 import { call, errorText } from '../lib/api.ts';
 import { useApp } from '../state/AppState.tsx';
 import { Banner, Field } from './Field.tsx';
+import { PasswordInput } from './PasswordInput.tsx';
 
 interface Props {
   purpose: TokenPurpose;
@@ -57,7 +58,7 @@ export function AuthPrompt({ purpose, onChange, resetSignal = 0, managerLabel, d
     if (managerFree) return null;
     return (
       <Field label={managerLabel ?? 'Tu contraseña (confirmación)'}>
-        <input className="inp" type="password" value={password} disabled={disabled} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        <PasswordInput className="inp" value={password} disabled={disabled} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </Field>
     );
   }
@@ -101,7 +102,7 @@ export function AuthPrompt({ purpose, onChange, resetSignal = 0, managerLabel, d
       </div>
       <div className="authbox-row">
         {mode === 'admin' ? (
-          <input className="inp" type="password" placeholder="Contraseña del administrador" value={secret} disabled={disabled || busy} autoComplete="off"
+          <PasswordInput className="inp" placeholder="Contraseña del administrador" value={secret} disabled={disabled || busy} autoComplete="off"
             onChange={(e) => setSecret(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void verify(); } }} />
         ) : (
           <input className="inp mono" placeholder="Código del token" value={secret} maxLength={TOKEN_CODE_MAX_LENGTH + 2} disabled={disabled || busy} autoComplete="off" spellCheck={false}

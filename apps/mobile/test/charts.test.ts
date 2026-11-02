@@ -140,11 +140,11 @@ test('líneas y barras: las alturas respetan la escala y las barras se apilan', 
 test('agregación local: extras no suman unidades; cancelación y devolución restan en su fecha', async () => {
   const { store, clock } = await readyStore();
   const cash = (n: number) => [{ method: 'efectivo' as const, amountCents: n, tenderedCents: n }];
-  // Día 1: 2 chicas (18000) + 1 grande (15000) + extra de 5000 sobre la chica.
+  // Día 1: 2 chicas (18000) + 1 grande (15000) + extra de 3000 (catálogo) sobre la chica.
   const s1 = await store.registerSale({
     saleId: newId(), actor: gerente, branchId: B1, terminalId: T1, sellerId: gerente.userId,
-    items: [{ variantId: V_CH, qty: 2 }, { variantId: V_GR, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', unitPriceCents: 5000, extraNote: 'Aroma' }],
-    payments: cash(38000),
+    items: [{ variantId: V_CH, qty: 2 }, { variantId: V_GR, qty: 1 }, { variantId: V_CH, qty: 1, kind: 'extra', extraId: 'ex-3000' }],
+    payments: cash(36000),
   });
   // Día 2: se devuelve 1 chica.
   clock.advance(24 * 3600 * 1000);
@@ -156,9 +156,9 @@ test('agregación local: extras no suman unidades; cancelación y devolución re
   const resolve = resolverFrom(new Map([[V_CH, { productId: P1, productName: 'Vela ritual' }], [V_GR, { productId: P1, productName: 'Vela ritual' }]]));
   const top = localTopSeries(sales, adjustments, resolve, { granularity: 'day', fromDay: '2026-10-22', toDay: '2026-10-23', limit: 5 });
   assert.equal(top.buckets.length, 2);
-  // Día 22: 3 unidades (2 chicas + 1 grande), el extra suma importe 38000 pero no unidades.
+  // Día 22: 3 unidades (2 chicas + 1 grande), el extra suma importe 36000 pero no unidades.
   assert.equal(top.buckets[0]!.products[0]!.qty, 3);
-  assert.equal(top.buckets[0]!.products[0]!.netCents, 38000);
+  assert.equal(top.buckets[0]!.products[0]!.netCents, 36000);
   // Día 23: -1 por devolución + 1 de la nueva venta = 0 unidades -> sin ventas (qty > 0 filtra).
   assert.equal(top.buckets[1]!.topProduct, null);
   assert.equal(top.series[0]!.points.map((p) => p.qty).join(','), '3,0');
@@ -169,6 +169,6 @@ test('agregación local: extras no suman unidades; cancelación y devolución re
   assert.equal(ps.totalQty, 2 - 1);
   assert.equal(ps.last.length, 1);
   assert.equal(ps.last[0]!.qty, 2, 'la venta se muestra con sus unidades originales (extras no suman)');
-  assert.equal(ps.last[0]!.netCents, 18000 + 5000);
+  assert.equal(ps.last[0]!.netCents, 18000 + 3000);
   assert.equal(ps.points.length, 28);
 });

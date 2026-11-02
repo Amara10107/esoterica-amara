@@ -2,6 +2,8 @@
  * Vinculación con la PC (red local). La PC muestra un QR con un secreto de un solo uso y caducidad; este
  * teléfono lo escanea, demuestra conocerlo con un HMAC y deriva su llave (que nunca viaja por la red y se
  * guarda en SecureStore). Después las lecturas y órdenes se firman con esa llave.
+ * Gerente: usa el teléfono como escáner libremente. Vendedor: antes necesita un token de seguridad con propósito
+ * 'escaner' (o la contraseña de un administrador).
  * AVISO: el enlace va en HTTP sin cifrar. Úsalo solo en la red del negocio, no en Wi-Fi público.
  */
 import React, { useCallback, useState } from 'react';
@@ -9,6 +11,7 @@ import { Alert } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Banner, Button, Card, H2, Loading, Muted, Row, Screen } from '../src/components/ui';
 import { CameraScanner } from '../src/components/CameraScanner';
+import { AuthModal } from '../src/components/AuthModal';
 import { useApp } from '../src/state/AppContext';
 import { evaluatePairingPayload } from '../src/lib/pairing';
 import { clearLink, clientFromLink, lanErrorMessage, loadLink, pairWithPc } from '../src/services/lan';
@@ -23,6 +26,10 @@ export default function PcLink() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  // Un vendedor debe autorizar (token o contraseña de admin) antes de vincular o usar el escáner; el gerente no.
+  const needsAuth = app.session?.user.role !== 'gerente';
+  const [authorized, setAuthorized] = useState(false);
+  const [askAuth, setAskAuth] = useState<null | 'scan' | 'use'>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -102,7 +109,7 @@ export default function PcLink() {
           <Row label="PC" value={`${link.host}:${link.port}`} />
           <Row label="Terminal de la PC" value={link.terminalId} />
           <Row label="Vinculado" value={formatMxDateTime(link.linkedAt)} />
-          <Button title="Usar como escáner de la PC" onPress={() => router.push('/pc-scanner')} />
+          <Button title="Usar como escáner de la PC" onPress={() => (needsAuth && !authorized ? setAskAuth('use') : router.push('/pc-scanner'))} />
           <Button title="Probar conexión" variant="secondary" onPress={() => void test()} loading={busy} />
           <Button title="Desvincular" variant="danger" onPress={unlink} disabled={busy} />
         </Card>
@@ -113,8 +120,21 @@ export default function PcLink() {
         </Card>
       )}
 
-      <Button title={scanning ? 'Cancelar escaneo' : link ? 'Volver a vincular (escanear QR)' : 'Escanear QR de la PC'} variant={link ? 'secondary' : 'primary'} onPress={() => { setError(null); setScanning((s) => !s); }} />
-      {scanning ? <CameraScanner paused={busy} barcodeTypes={['qr']} onScan={(d) => void onQr(d)} height={300} /> : null}
+      <Button title={scanning ? 'Cancelar escaneo' : link ? 'Volver a vincular (escanear QR)' : 'Escanear QR de la PC'} variant={link ? 'secondary' : 'primary'} onPress={() => { setError(null); if (!scanning && needsAuth && !authorized) setAskAuth('scan'); else setScanning((s) => !s); }} />
+      {needsAuth ? <Muted>Para usar el teléfono como escáner necesitas un token de seguridad del administrador (o su contraseña).</Muted> : null}
+      <AuthModal
+        visible={askAuth !== null}
+        purpose="escaner"
+        onCancel={() => setAskAuth(null)}
+        onAuthorized={() => {
+          const next = askAuth;
+          setAuthorized(true);
+          setAskAuth(null);
+          if (next === 'scan') setScanning(true);
+          else if (next === 'use') router.push('/pc-scanner');
+        }}
+      />
+      {scanning ? <CameraScanner paused={busy} barcodeTypes={['qr']} onScan={(d) => void onQr(d)} height={460} showFrame={false} /> : null}
     </Screen>
   );
 }

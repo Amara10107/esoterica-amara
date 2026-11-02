@@ -45,7 +45,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '900', letterSpacing: 1 },
   sub: { fontSize: 14 },
   switchRow: { flexDirection: 'row', gap: space.sm },
-  seg: { flex: 1, minHeight: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.white },
+  seg: { flex: 1, minHeight: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card },
   segOn: { backgroundColor: colors.dark },
   segText: { fontSize: 17, fontWeight: '800', color: colors.dark },
   segTextOn: { color: colors.white },

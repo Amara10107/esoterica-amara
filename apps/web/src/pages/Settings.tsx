@@ -5,7 +5,7 @@ import { errorMessage, useAsync } from '../lib/hooks.ts';
 import { DEFAULT_PREFS } from '../lib/dashboard.ts';
 import { ALL_PERMISSIONS, PERMISSION_LABEL, ROLE_NAME } from '../lib/permLabels.ts';
 import { Alert, Badge, Card, ConfirmDialog, PageHeader } from '../components/ui.tsx';
-import { ExtraCategoriesCard } from '../components/ExtraCategoriesCard.tsx';
+import { ExtraCatalogCard } from '../components/ExtraCatalogCard.tsx';
 import { useAuth, useToast } from '../context.tsx';
 
 /**
@@ -77,7 +77,7 @@ export function Settings() {
       </Card>
 
       {/* Solo el gerente (config.editar) cambia las categorías; el servidor lo vuelve a validar. */}
-      {can('config.editar') && <ExtraCategoriesCard />}
+      {can('config.editar') && <ExtraCatalogCard />}
 
       <Card title="Permisos de tu sesión (informativo)">
         <Alert tone="info">Lista que entregó el servidor para mostrar u ocultar opciones. Cada acción se vuelve a autorizar en el servidor.</Alert>

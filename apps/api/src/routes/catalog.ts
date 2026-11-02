@@ -43,11 +43,16 @@ catalogRouter.get(
   ah(async (req, res) => {
     const user = sessionUser(req);
     const q = parse(
-      z.object({ q: z.string().trim().max(100).optional(), category: z.string().max(60).optional(), status: z.enum(['activo', 'archivado', 'todos']).default('activo') }).merge(pageQuery(50, 200)),
+      z.object({ q: z.string().trim().max(100).optional(), category: z.string().max(60).optional(), status: z.enum(['activo', 'archivado', 'borrado', 'todos']).default('activo') }).merge(pageQuery(50, 200)),
       req.query,
     );
     const filter: Record<string, unknown> = {};
-    if (q.status !== 'todos') filter.status = q.status;
+    // v2.4.4: «borrado» = papelera (historial). Los borrados no salen en Activos, Archivados ni Todos.
+    if (q.status === 'borrado') filter.deleted = true;
+    else {
+      filter.deleted = { $ne: true };
+      if (q.status !== 'todos') filter.status = q.status;
+    }
     if (q.category) filter.category = q.category;
     if (q.q) filter._id = { $in: await productIdsMatching(q.q) };
     const [total, products] = await Promise.all([
@@ -60,6 +65,20 @@ catalogRouter.get(
       total,
       items: products.map((p) => ({ ...toProduct(p), variants: variants.filter((v) => v.productId === p._id).map((v) => toVariant(v, withCost)) })),
     });
+  }),
+);
+
+/** v2.2. Un producto con sus variantes (la web lo usa para editarlo desde Inventario). */
+catalogRouter.get(
+  '/products/:id',
+  requirePerm('productos.ver'),
+  ah(async (req, res) => {
+    const user = sessionUser(req);
+    const p = await col('products').findOne({ _id: req.params.id as any });
+    if (!p) throw new HttpError(404, 'Producto no encontrado');
+    const variants = await col('variants').find({ productId: p._id }).sort({ label: 1 }).toArray();
+    const withCost = canSeeCosts(user.role);
+    res.json({ ...toProduct(p), variants: variants.map((v) => toVariant(v, withCost)) });
   }),
 );
 
@@ -127,6 +146,61 @@ catalogRouter.post(
     }
     await audit({ userId: user.id, action: 'producto.crear', entity: 'product', entityId: productId, detail: { name: body.product.name, sku: body.product.sku, variants: variantDocs.map((v) => ({ id: v._id, label: v.label, priceCents: v.priceCents, costCents: v.costCents })) } });
     res.status(201).json({ product: toProduct(productDoc), variants: variantDocs.map((v) => toVariant(v, canSeeCosts(user.role))) });
+  }),
+);
+
+/** v2.3.4: agrega una o más variantes (cada una con su código de barras) a un producto que ya existe. */
+const addVariantsSchema = z.object({
+  variants: z.array(variantSchema).min(1).max(20),
+  initialStock: z.array(z.object({ variantIndex: z.number().int().min(0), branchId: z.string().min(1), qty: z.number().int().min(0), location: z.string().max(60).optional() })).default([]),
+});
+
+catalogRouter.post(
+  '/products/:id/variants',
+  requirePerm('productos.editar'),
+  ah(async (req, res) => {
+    const user = sessionUser(req);
+    const productId = String(req.params.id);
+    const body = parse(addVariantsSchema, req.body);
+    const product = await col('products').findOne({ _id: productId } as any);
+    if (!product) throw new HttpError(404, 'Producto no encontrado');
+    const labels = new Set((await col('variants').find({ productId }, { projection: { label: 1 } }).toArray()).map((v) => String(v.label).toLowerCase()));
+    for (const v of body.variants) {
+      if (labels.has(v.label.toLowerCase())) throw new HttpError(409, `Ya existe una variante llamada «${v.label}» en este producto`);
+      labels.add(v.label.toLowerCase());
+    }
+    await assertBarcodesFree(body.variants.map((v) => v.barcode).filter((b): b is string => !!b));
+    for (const s of body.initialStock) {
+      if (s.variantIndex >= body.variants.length) throw new HttpError(400, 'initialStock: variante inexistente');
+      assertBranch(user, s.branchId);
+      if (!(await col('branches').findOne({ _id: s.branchId }, { projection: { _id: 1 } }))) throw new HttpError(400, 'initialStock: sucursal inexistente');
+    }
+    const now = new Date().toISOString();
+    const firstSeq = await reserveInternalCodes(body.variants.length);
+    const variantDocs = body.variants.map((v, i) => {
+      const id = newId();
+      return compact({
+        _id: id, id, productId, label: v.label, unit: v.unit, barcode: v.barcode || undefined, internalCode: buildInternalCode(firstSeq + i),
+        qrValue: buildQrValue(id), costCents: v.costCents, priceCents: v.priceCents, minStock: v.minStock, location: v.location || undefined,
+        status: 'activo', createdAt: now, updatedAt: now,
+      });
+    });
+    try {
+      await col('variants').insertMany(variantDocs);
+    } catch (e) {
+      if ((e as { code?: number })?.code === 11000) throw new HttpError(409, 'Código de barras o variante duplicados');
+      throw e;
+    }
+    for (const [i, s] of body.initialStock.entries()) {
+      if (s.qty === 0) continue;
+      const v = variantDocs[s.variantIndex]!;
+      await recordMovement({
+        id: `${v._id as string}:init${i}`, variantId: v._id as string, branchId: s.branchId, delta: s.qty, type: 'entrada', reason: 'Existencia inicial (variante nueva)',
+        refType: 'product', refId: productId, userId: user.id, authorizedBy: null, grantId: null, location: s.location ?? null, createdAt: now, opId: null,
+      });
+    }
+    await audit({ userId: user.id, action: 'variante.crear', entity: 'product', entityId: productId, detail: { name: product.name, variants: variantDocs.map((v) => ({ id: v._id, label: v.label, barcode: v.barcode ?? null, priceCents: v.priceCents, costCents: v.costCents })) } });
+    res.status(201).json({ variants: variantDocs.map((v) => toVariant(v, canSeeCosts(user.role))) });
   }),
 );
 
@@ -217,7 +291,8 @@ async function setProductStatus(id: string, status: 'activo' | 'archivado', user
   if (!cur) throw new HttpError(404, 'Producto no encontrado');
   if (cur.status === status) return { unchanged: true };
   const now = new Date().toISOString();
-  await col('products').updateOne({ _id: id }, { $set: { status, updatedAt: now } });
+  // Restaurar también saca el producto de la papelera.
+  await col('products').updateOne({ _id: id }, { $set: { status, updatedAt: now, ...(status === 'activo' ? { deleted: false } : {}) } });
   await col('variants').updateMany({ productId: id }, { $set: { status, updatedAt: now } });
   await audit({ userId, action: status === 'archivado' ? 'producto.archivar' : 'producto.restaurar', entity: 'product', entityId: id, at: now, detail: { name: cur.name } });
   return { unchanged: false };
@@ -225,6 +300,23 @@ async function setProductStatus(id: string, status: 'activo' | 'archivado', user
 
 catalogRouter.post('/products/:id/archive', requirePerm('productos.editar'), ah(async (req, res) => {
   res.json({ ok: true, ...(await setProductStatus(req.params.id!, 'archivado', sessionUser(req).id)) });
+}));
+/**
+ * v2.4.4. «Borrar» = mandar a la papelera: el producto queda archivado (la caja ya no lo vende) y marcado como borrado
+ * (desaparece de Catálogo/Inventario y queda en el historial de borrados, donde se puede restaurar). NO se elimina de la base:
+ * las ventas, movimientos y tickets antiguos siguen mostrando su nombre y la sincronización de las cajas no se rompe.
+ */
+catalogRouter.post('/products/:id/delete', requirePerm('productos.editar'), ah(async (req, res) => {
+  const id = req.params.id!;
+  const cur = await col('products').findOne({ _id: id }, { projection: { name: 1, deleted: 1 } });
+  if (!cur) throw new HttpError(404, 'Producto no encontrado');
+  if (cur.deleted === true) return void res.json({ ok: true, unchanged: true });
+  const userId = sessionUser(req).id;
+  const now = new Date().toISOString();
+  await setProductStatus(id, 'archivado', userId);
+  await col('products').updateOne({ _id: id }, { $set: { deleted: true, deletedAt: now, deletedBy: userId, updatedAt: now } });
+  await audit({ userId, action: 'producto.borrar', entity: 'product', entityId: id, at: now, detail: { name: cur.name } });
+  res.json({ ok: true, unchanged: false });
 }));
 catalogRouter.post('/products/:id/restore', requirePerm('productos.editar'), ah(async (req, res) => {
   res.json({ ok: true, ...(await setProductStatus(req.params.id!, 'activo', sessionUser(req).id)) });

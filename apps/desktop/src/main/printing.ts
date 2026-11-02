@@ -22,6 +22,9 @@ import type { LocalStore } from '@amara/database';
 import { buildClosureTicketData, buildClosureTicketHtml } from '../shared/closure-ticket.ts';
 import type { ClosureRecordInput } from '../shared/closure-ticket.ts';
 import { buildPermitTicketHtml } from '../shared/permit-ticket.ts';
+import * as QRCodeNs from 'qrcode';
+import { advanceQrValue } from '@amara/shared';
+import { buildAdvanceTicketHtml } from '../shared/advance-ticket.ts';
 import type { PermitTicketData } from '../shared/permit-ticket.ts';
 import { buildTestTicketHtml, buildTicketHtml, buildTicketPairHtml } from '../shared/ticket-format.ts';
 import type { TicketCopy } from '../shared/ticket-format.ts';
@@ -177,6 +180,18 @@ export class PrintService {
     const s = this.deps.getSettings();
     const html = buildClosureTicketHtml(await this.closureData(sessionId), { paperMm: s.paperMm, logoSrc: await this.logoSrc() });
     return { title: 'Ticket de cierre de caja', paperMm: s.paperMm, pages: [{ label: 'Cierre de caja', html }] };
+  }
+
+  /** v2.3. Ticket de un anticipo de limpia con su QR (para buscarlo después). */
+  async advancePreview(advanceId: string, entryId: string | null): Promise<DocPreview> {
+    const adv = await this.deps.store.getAdvance(advanceId);
+    if (!adv) throw new AppError('anticipo_no_encontrado', 'No se encontró el anticipo en este equipo.');
+    const s = this.deps.getSettings();
+    const QR: typeof QRCodeNs = (QRCodeNs as unknown as { default?: typeof QRCodeNs }).default ?? QRCodeNs;
+    const qrSvg = await QR.toString(advanceQrValue(adv.code), { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
+    const branch = await this.deps.store.db.get<{ name: string }>('SELECT name FROM branches WHERE id = ?', [adv.branchId]);
+    const html = buildAdvanceTicketHtml(adv, { paperMm: s.paperMm, qrSvg, branchName: branch?.name, uptoEntryId: entryId, logoSrc: await this.logoSrc() });
+    return { title: `Ticket de anticipo ${adv.code}`, paperMm: s.paperMm, pages: [{ label: `Anticipo ${adv.code}`, html }] };
   }
 
   async permitPreview(data: PermitTicketData): Promise<DocPreview> {

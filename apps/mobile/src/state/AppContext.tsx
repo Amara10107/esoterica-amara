@@ -33,6 +33,7 @@ import type { BranchRow } from '../services/database';
 import { touchClockHighWater } from '../services/entry';
 import { KEYS, secureDelete, secureGet, secureGetJson, secureSet, secureSetJson } from '../services/secure';
 import { runSync } from '../services/sync';
+import { THEME_CACHE_KEY } from '../theme';
 import { CLOCK_TOLERANCE_MS } from '../lib/staleness';
 
 export type Phase = 'cargando' | 'error' | 'login' | 'terminal' | 'sucursal' | 'listo';
@@ -224,6 +225,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
         if (report.pulled) {
           setBranches(await loadBranches(s));
+          // v2.2: guarda la apariencia del administrador; se aplica al abrir la app (los estilos se crean al arrancar).
+          try {
+            await secureSet(THEME_CACHE_KEY, JSON.stringify(await s.getTheme()));
+          } catch {
+            /* sin almacén seguro: queda la apariencia anterior */
+          }
           // Tras un pull correcto la hora del teléfono quedó comparada con la del servidor: si coincide, se
           // reinicia la marca de agua (permite corregir un reloj que estaba adelantado).
           const lastPull = await s.getMeta('last_pull_at');

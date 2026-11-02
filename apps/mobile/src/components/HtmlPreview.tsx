@@ -24,6 +24,6 @@ export function HtmlPreview({ html, height = 380, style }: { html: string; heigh
 }
 
 const styles = StyleSheet.create({
-  box: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.white },
-  web: { flex: 1, backgroundColor: colors.white },
+  box: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.card },
+  web: { flex: 1, backgroundColor: colors.card },
 });

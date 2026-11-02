@@ -26,7 +26,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/logo-amara.png",
-          "imageWidth": 220,
+          "imageWidth": 140,
           "resizeMode": "contain",
           "backgroundColor": "#FFFFFF"
         }

@@ -172,7 +172,21 @@ inventoryRouter.get(
       col('inventory_movements').countDocuments(filter),
       col('inventory_movements').find(filter).sort({ createdAt: -1 }).skip(q.offset).limit(q.limit).toArray(),
     ]);
-    res.json({ total, items: items.map(({ _id, opId, ...m }) => ({ ...m, id: _id })) });
+    // v2.4: nombres legibles (producto, variante y persona) para la auditoría y el historial.
+    const variantIds = [...new Set(items.map((m) => m.variantId as string))];
+    const userIds = [...new Set(items.map((m) => m.userId as string).filter(Boolean))];
+    const variants = variantIds.length ? await col('variants').find({ _id: { $in: variantIds } } as any).project({ label: 1, productId: 1 }).toArray() : [];
+    const products = variants.length ? await col('products').find({ _id: { $in: [...new Set(variants.map((v) => v.productId as string))] } } as any).project({ name: 1 }).toArray() : [];
+    const users = userIds.length ? await col('users').find({ _id: { $in: userIds } } as any).project({ name: 1 }).toArray() : [];
+    const pName = new Map(products.map((p) => [String(p._id), String(p.name)]));
+    const vInfo = new Map(variants.map((v) => [String(v._id), { label: String(v.label), productName: pName.get(String(v.productId)) }]));
+    const uName = new Map(users.map((u) => [String(u._id), String(u.name)]));
+    res.json({
+      total,
+      items: items.map(({ _id, opId, ...m }) => ({
+        ...m, id: _id, productName: vInfo.get(m.variantId as string)?.productName, variantLabel: vInfo.get(m.variantId as string)?.label, userName: uName.get(m.userId as string),
+      })),
+    });
   }),
 );
 

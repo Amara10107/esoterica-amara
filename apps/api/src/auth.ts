@@ -29,7 +29,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
-      terminal?: { id: string; code: string; branchId: string };
+      terminal?: { id: string; code: string; branchId: string; branchIds?: string[] };
     }
   }
 }
@@ -69,7 +69,7 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
     if (p.scope === 'terminal') {
       const t = await col('terminals').findOne({ _id: p.sub as any });
       if (!t || t.revoked || t.tokenVersion !== p.v) throw new HttpError(401, 'Terminal no autorizada o revocada');
-      req.terminal = { id: t._id as any, code: t.code, branchId: t.branchId };
+      req.terminal = { id: t._id as any, code: t.code, branchId: t.branchId, branchIds: t.branchIds ?? [t.branchId] };
       return next();
     }
     if (p.scope !== 'session') throw new HttpError(401, 'Tipo de token no permitido');

@@ -45,7 +45,7 @@ export function escapeHtml(s: string): string {
 export const BASE_CSS = (paperMm: 58 | 80) => {
   const w = printableWidthMm(paperMm);
   const fs = paperMm === 58 ? 10.5 : 12;
-  const logoMm = paperMm === 58 ? 30 : 40;
+  const logoMm = paperMm === 58 ? 14 : 18; // logo pequeño: el ticket es para datos, no para el logo
   return `
 @page { size: ${paperMm}mm auto; margin: 0; }
 * { box-sizing: border-box; }

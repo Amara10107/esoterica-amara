@@ -3,12 +3,12 @@
  * del producto y edición de variantes. Validan con los esquemas Zod de @amara/shared antes de
  * enviar (el servidor vuelve a validar) y piden confirmación al cerrar con cambios sin guardar.
  */
-import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
-import { buildInternalCode } from '@amara/shared';
+import { useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import { FIELD_HELP, autoVariantLabel, buildInternalCode, randomSkuTail, skuPrefix } from '@amara/shared';
 import { api, ApiError } from '../lib/api.ts';
 import { errorMessage, useDirty } from '../lib/hooks.ts';
 import {
-  buildProductEditPayload, buildProductPayload, buildVariantEditPayload, emptyProductForm, emptyVariantForm,
+  buildProductEditPayload, buildProductPayload, buildVariantAddPayload, buildVariantEditPayload, emptyProductForm, emptyVariantForm,
   firstError, type FieldErrors, type ProductForm, type VariantEditForm,
 } from '../lib/forms.ts';
 import { centsToInput } from '../lib/format.ts';
@@ -28,17 +28,25 @@ function ProductFields(props: {
   categories: string[];
 }) {
   const { form, setForm, errors } = props;
-  const set = <K extends keyof ProductForm>(k: K, v: ProductForm[K]) => setForm((f) => ({ ...f, [k]: v }));
+  // v2.4: el SKU se llena solo con el tipo y el nombre (sigue siendo editable); la parte al azar se genera una sola vez.
+  const tail = useRef(randomSkuTail());
+  const auto = (type: string, name: string) => `${skuPrefix(type, name)}-${tail.current}`;
+  const set = <K extends keyof ProductForm>(k: K, v: ProductForm[K]) =>
+    setForm((f) => {
+      const next = { ...f, [k]: v };
+      if ((k === 'type' || k === 'name') && (f.sku === '' || f.sku === auto(f.type, f.name))) next.sku = auto(next.type, next.name);
+      return next;
+    });
   return (
     <>
       <div className="grid-2">
-        <Field label="Nombre del producto" required error={errors['product.name'] ?? errors.name}>
+        <Field label="Nombre del producto" required hint={FIELD_HELP.name} error={errors['product.name'] ?? errors.name}>
           <input value={form.name} maxLength={120} onChange={(e) => set('name', e.target.value)} />
         </Field>
-        <Field label="Tipo" required hint="Ejemplo: vela, incienso, mineral, libro" error={errors['product.type'] ?? errors.type}>
+        <Field label="Tipo" required hint={FIELD_HELP.type} error={errors['product.type'] ?? errors.type}>
           <input value={form.type} maxLength={60} onChange={(e) => set('type', e.target.value)} />
         </Field>
-        <Field label="Categoría" required error={errors['product.category'] ?? errors.category}>
+        <Field label="Categoría" required hint={FIELD_HELP.category} error={errors['product.category'] ?? errors.category}>
           <input value={form.category} maxLength={60} list="dl-categories" onChange={(e) => set('category', e.target.value)} />
           <datalist id="dl-categories">
             {props.categories.map((c) => (
@@ -46,8 +54,13 @@ function ProductFields(props: {
             ))}
           </datalist>
         </Field>
-        <Field label="SKU" required hint="Clave interna única del producto" error={errors['product.sku'] ?? errors.sku}>
-          <input value={form.sku} maxLength={40} onChange={(e) => set('sku', e.target.value)} />
+        <Field label="SKU (automático)" required hint={FIELD_HELP.sku + ' Se llena solo con el tipo; puedes cambiarlo.'} error={errors['product.sku'] ?? errors.sku}>
+          <div className="input-action">
+            <input value={form.sku} maxLength={40} onChange={(e) => set('sku', e.target.value)} />
+            <button type="button" className="btn btn-sm" onClick={() => { tail.current = randomSkuTail(); set('sku', auto(form.type, form.name)); }}>
+              Generar otro
+            </button>
+          </div>
         </Field>
         <Field label="Marca" error={errors['product.brand'] ?? errors.brand}>
           <input value={form.brand} maxLength={80} onChange={(e) => set('brand', e.target.value)} />
@@ -108,7 +121,7 @@ function ProductFields(props: {
 
 /* --------------------------------------------------------------- Alta de producto */
 
-export function ProductCreateModal(props: { categories: string[]; onClose: () => void; onSaved: () => void }) {
+export function ProductCreateModal(props: { categories: string[]; onClose: () => void; onSaved: () => void; onAsVariant?: (barcode: string) => void }) {
   const { branches } = useBranches();
   const { notify } = useToast();
   const [form, setForm] = useState<ProductForm>(() => emptyProductForm(branches.length === 1 ? branches[0]!.id : ''));
@@ -120,6 +133,15 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
 
   const setVariant = (i: number, patch: Partial<ProductForm['variants'][number]>) =>
     setForm((f) => ({ ...f, variants: f.variants.map((v, j) => (j === i ? { ...v, ...patch } : v)) }));
+
+  // Selector "cuántas variantes": agrega cajas vacías o quita las últimas.
+  const setVariantCount = (n: number) =>
+    setForm((f) => {
+      if (n === f.variants.length) return f;
+      if (n < f.variants.length) return { ...f, variants: f.variants.slice(0, n) };
+      const extra = Array.from({ length: n - f.variants.length }, () => emptyVariantForm(branches.length === 1 ? branches[0]!.id : ''));
+      return { ...f, variants: [...f.variants, ...extra] };
+    });
 
   // Pregunta al servidor si el código ya existe (el servidor sigue siendo quien decide al guardar).
   const checkCode = async (i: number, code: string) => {
@@ -155,6 +177,11 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
     const errs = { ...r.errors };
     Object.entries(dupCodes).forEach(([i, dup]) => {
       if (dup) errs[`variants.${i}.barcode`] = 'Este código ya está registrado en otro producto';
+    });
+    // La existencia inicial es obligatoria: cada variante necesita al menos 1 pieza en alguna sucursal.
+    form.variants.forEach((v, i) => {
+      const total = v.stock.reduce((a, st) => a + (st.branchId && /^\d+$/.test(st.qty.trim()) ? Number(st.qty.trim()) : 0), 0);
+      if (total < 1) errs[`variants.${i}.stock.0.qty`] = 'Obligatorio: escribe una existencia inicial de 1 o más (y elige la sucursal)';
     });
     setErrors(errs);
     if (!r.payload || Object.keys(errs).length > 0) {
@@ -192,6 +219,20 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
         <ProductFields form={form} setForm={setForm} errors={errors} categories={props.categories} />
 
         <h3 className="section-title">Variantes (tamaño o presentación)</h3>
+        <Field label="¿Cuántas variantes tiene este producto?" hint="Si es una sola presentación deja 1: el sistema la llama «Única» (no tienes que escribirlo). Cada variante lleva su propio código de barras, costo, precio y existencia.">
+          <select
+            aria-label="Número de variantes"
+            value={form.variants.length}
+            onChange={(e) => setVariantCount(Number(e.target.value))}
+            style={{ maxWidth: 140 }}
+          >
+            {Array.from({ length: 12 }, (_, k) => k + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Alert tone="info">
           El código QR de cada variante se genera automáticamente al guardar (contiene solo su identificador). El código de barras puede ser
           el del fabricante o uno interno; luego podrás imprimir ambas etiquetas en la sección Etiquetas.
@@ -211,13 +252,13 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
               )}
             </legend>
             <div className="grid-3">
-              <Field label="Tamaño / presentación" required hint="Ejemplo: 100 ml, caja de 20, mediana" error={errors[`variants.${i}.label`]}>
-                <input value={v.label} maxLength={60} onChange={(e) => setVariant(i, { label: e.target.value })} />
+              <Field label="Nombre de la variante (opcional)" hint={FIELD_HELP.variant + ` Si lo dejas vacío, el sistema la llama «${autoVariantLabel(i, form.variants.length)}».`} error={errors[`variants.${i}.label`]}>
+                <input value={v.label} maxLength={60} placeholder={autoVariantLabel(i, form.variants.length)} onChange={(e) => setVariant(i, { label: e.target.value })} />
               </Field>
               <Field label="Unidad" error={errors[`variants.${i}.unit`]}>
                 <input value={v.unit} maxLength={20} onChange={(e) => setVariant(i, { unit: e.target.value })} />
               </Field>
-              <Field label="Código de barras" hint="Déjalo vacío para usar un código interno" error={errors[`variants.${i}.barcode`]}>
+              <Field label="Código de barras" hint={FIELD_HELP.barcode + ' Haz clic en el cuadro y escanea con la pistola.'} error={errors[`variants.${i}.barcode`]}>
                 <div className="input-action">
                   <input
                     value={v.barcode}
@@ -228,18 +269,26 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
                     }}
                     onBlur={(e) => checkCode(i, e.target.value)}
                   />
+                  <button type="button" className="btn btn-sm" title="Sin código del fabricante: se usa el código interno para la etiqueta" onClick={() => { setVariant(i, { barcode: '' }); setDupCodes((d) => ({ ...d, [i]: false })); }}>
+                    Sin código propio
+                  </button>
                   <button type="button" className="btn btn-sm" onClick={() => generateCode(i)}>
                     Generar interno
                   </button>
+                  {props.onAsVariant && v.barcode.trim() !== '' && (
+                    <button type="button" className="btn btn-sm btn-ghost" title="Este código es de otra presentación de un producto que ya existe" onClick={() => props.onAsVariant?.(v.barcode.trim())}>
+                      Agregar como variante
+                    </button>
+                  )}
                 </div>
               </Field>
-              <Field label="Costo (MXN)" required error={errors[`variants.${i}.costCents`]}>
+              <Field label="Costo (MXN)" required hint="Costo = lo que te costó a ti, como gerente (no es el precio al público)" error={errors[`variants.${i}.costCents`]}>
                 <input inputMode="decimal" placeholder="0.00" value={v.cost} onChange={(e) => setVariant(i, { cost: e.target.value })} />
               </Field>
               <Field label="Precio de venta (MXN)" required error={errors[`variants.${i}.priceCents`]}>
                 <input inputMode="decimal" placeholder="0.00" value={v.price} onChange={(e) => setVariant(i, { price: e.target.value })} />
               </Field>
-              <Field label="Existencia mínima" hint="Aviso de bajo mínimo" error={errors[`variants.${i}.minStock`]}>
+              <Field label="Existencia mínima" hint={FIELD_HELP.minStock} error={errors[`variants.${i}.minStock`]}>
                 <input inputMode="numeric" value={v.minStock} onChange={(e) => setVariant(i, { minStock: e.target.value })} />
               </Field>
             </div>
@@ -247,7 +296,7 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
               <input value={v.location} maxLength={60} onChange={(e) => setVariant(i, { location: e.target.value })} />
             </Field>
 
-            <div className="sub-title">Cantidad inicial por sucursal</div>
+            <div className="sub-title">Existencia inicial por sucursal (obligatoria: debe haber al menos 1, no puede quedar en 0)</div>
             {v.stock.map((s, j) => {
               const locs = branches.find((b) => b.id === s.branchId)?.locations ?? [];
               const upd = (patch: Partial<typeof s>) =>
@@ -292,9 +341,6 @@ export function ProductCreateModal(props: { categories: string[]; onClose: () =>
             </button>
           </fieldset>
         ))}
-        <button type="button" className="btn" onClick={() => setForm((f) => ({ ...f, variants: [...f.variants, emptyVariantForm(branches.length === 1 ? branches[0]!.id : '')] }))}>
-          Agregar otra variante
-        </button>
       </form>
     </Modal>
   );
@@ -438,7 +484,7 @@ export function VariantEditModal(props: { product: CatalogProduct; variant: Cata
           <Field label="Unidad" error={errors.unit}>
             <input value={form.unit} maxLength={20} onChange={(e) => set({ unit: e.target.value })} />
           </Field>
-          <Field label="Código de barras" error={errors.barcode}>
+          <Field label="Código de barras" hint={FIELD_HELP.barcode} error={errors.barcode}>
             <input value={form.barcode} maxLength={40} onChange={(e) => set({ barcode: e.target.value })} />
           </Field>
           <Field label="Lugar habitual" error={errors.location}>
@@ -462,6 +508,129 @@ export function VariantEditModal(props: { product: CatalogProduct; variant: Cata
         <p className="muted small">
           La existencia no se edita aquí: usa entradas, salidas, ajustes o conteos. {v.archived && <Badge tone="muted">Variante archivada</Badge>}
         </p>
+      </form>
+    </Modal>
+  );
+}
+
+
+/* ------------------------------------------- Agregar variante a un producto existente */
+
+/**
+ * Agrega una presentación nueva (con SU código de barras, costo, precio y existencia inicial) a un producto que ya existe.
+ * Si `product` no viene, primero se busca el producto ("Agregar como variante" tras escanear un código).
+ */
+export function VariantAddModal(props: { product?: CatalogProduct | null; barcode?: string; onClose: () => void; onSaved: () => void }) {
+  const { branches } = useBranches();
+  const { notify } = useToast();
+  const [target, setTarget] = useState<CatalogProduct | null>(props.product ?? null);
+  const [search, setSearch] = useState('');
+  const [found, setFound] = useState<CatalogProduct[]>([]);
+  const [form, setForm] = useState(() => ({ ...emptyVariantForm(), barcode: props.barcode ?? '' }));
+  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0]!.id : '');
+  const [qty, setQty] = useState('');
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [serverError, setServerError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+
+  const doSearch = async (text: string) => {
+    setSearch(text);
+    if (text.trim().length < 2) return setFound([]);
+    try {
+      const d = await api.get<{ items?: CatalogProduct[] }>('/catalog/products', { q: text.trim(), limit: 8 });
+      setFound(d.items ?? []);
+    } catch {
+      setFound([]);
+    }
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setServerError('');
+    if (!target) return setServerError('Elige el producto del que será variante.');
+    const r = buildVariantAddPayload(form, branchId, qty, `Variante ${(target?.variants.length ?? 0) + 1}`);
+    setErrors(r.errors);
+    if (!r.payload) return setServerError(`Revisa el formulario: ${firstError(r.errors) ?? 'hay datos por corregir'}`);
+    setBusy(true);
+    try {
+      const code = form.barcode.trim();
+      if (code) {
+        const chk = await api.get<{ duplicate: boolean }>('/catalog/codes/check', { code });
+        if (chk.duplicate) throw new Error(`El código ${code} ya está registrado en otro producto.`);
+      }
+      await api.post(`/catalog/products/${target.id}/variants`, r.payload);
+      notify(`Variante «${form.label.trim()}» agregada a ${target.name}.`);
+      props.onSaved();
+    } catch (err) {
+      setServerError(errorMessage(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={target ? `Agregar variante a ${target.name}` : 'Agregar como variante de otro producto'}
+      size="lg"
+      onClose={props.onClose}
+      footer={
+        <>
+          <CloseButton label="Cancelar" disabled={busy} />
+          <button type="submit" form="variant-add" className="btn btn-primary" disabled={busy || !target}>{busy ? 'Guardando...' : 'Guardar variante'}</button>
+        </>
+      }
+    >
+      <form id="variant-add" className="form" onSubmit={submit} noValidate>
+        {serverError && <Alert tone="error">{serverError}</Alert>}
+        {target ? (
+          <div className="selected-box">
+            <div>
+              <strong>{target.name}</strong> <span className="muted">Variantes: {target.variants.map((v) => v.label).join(', ')}</span>
+            </div>
+            {!props.product && <button type="button" className="btn btn-sm" onClick={() => setTarget(null)}>Cambiar</button>}
+          </div>
+        ) : (
+          <Field label="¿De qué producto es variante?" required hint="Busca por nombre, SKU o código.">
+            <input value={search} placeholder="Escribe al menos 2 letras" onChange={(e) => void doSearch(e.target.value)} />
+            <div className="stack">
+              {found.map((p) => (
+                <button type="button" key={p.id} className="btn btn-sm" onClick={() => setTarget(p)}>{p.name} ({p.variants.length} var.)</button>
+              ))}
+            </div>
+          </Field>
+        )}
+        <div className="grid-3">
+          <Field label="Nombre de la variante (opcional)" hint={FIELD_HELP.variant + ' Si lo dejas vacío será «Variante N».'} error={errors.label}>
+            <input value={form.label} maxLength={60} placeholder={`Variante ${(target?.variants.length ?? 0) + 1}`} onChange={(e) => set({ label: e.target.value })} />
+          </Field>
+          <Field label="Unidad">
+            <input value={form.unit} maxLength={20} onChange={(e) => set({ unit: e.target.value })} />
+          </Field>
+          <Field label="Código de barras de esta variante" hint={FIELD_HELP.barcode + ' Haz clic y escanea con la pistola.'}>
+            <input value={form.barcode} maxLength={40} onChange={(e) => set({ barcode: e.target.value })} />
+          </Field>
+          <Field label="Costo (MXN)" required hint={FIELD_HELP.cost} error={errors.costCents}>
+            <input inputMode="decimal" value={form.cost} onChange={(e) => set({ cost: e.target.value })} />
+          </Field>
+          <Field label="Precio de venta (MXN)" required error={errors.priceCents}>
+            <input inputMode="decimal" value={form.price} onChange={(e) => set({ price: e.target.value })} />
+          </Field>
+          <Field label="Existencia mínima" hint={FIELD_HELP.minStock} error={errors.minStock}>
+            <input inputMode="numeric" value={form.minStock} onChange={(e) => set({ minStock: e.target.value })} />
+          </Field>
+          <Field label="Sucursal" required error={errors.branchId}>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+              <option value="">Elige…</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Existencia inicial (1 o más)" required hint={FIELD_HELP.qty} error={errors.qty}>
+            <input inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} />
+          </Field>
+          <Field label="Lugar" hint={FIELD_HELP.location}>
+            <input value={form.location} maxLength={60} onChange={(e) => set({ location: e.target.value })} />
+          </Field>
+        </div>
       </form>
     </Modal>
   );

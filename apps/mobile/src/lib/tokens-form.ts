@@ -21,6 +21,10 @@ export const TOKEN_PURPOSE_OPTIONS: { id: TokenPurpose; label: string; hint: str
   { id: 'devolucion', label: PURPOSE_NAME.devolucion, hint: 'Permite registrar una devolución.' },
   { id: 'cancelacion', label: PURPOSE_NAME.cancelacion, hint: 'Permite cancelar un ticket.' },
   { id: 'limpias', label: PURPOSE_NAME.limpias, hint: 'Permite entrar a Limpias a un vendedor.' },
+  { id: 'escaner', label: PURPOSE_NAME.escaner, hint: 'Permite a un vendedor usar el teléfono como escáner.' },
+  { id: 'descuento', label: PURPOSE_NAME.descuento, hint: 'Permite a un vendedor aplicar un descuento en una venta.' },
+  { id: 'apertura_caja', label: PURPOSE_NAME.apertura_caja, hint: 'Permite abrir la caja del teléfono a un vendedor (solo emergencias).' },
+  { id: 'retiro_caja', label: PURPOSE_NAME.retiro_caja, hint: 'Permite a un vendedor sacar dinero de la caja (comida, pagos, etc.).' },
 ];
 
 /** Texto -> número aceptando coma decimal ("1,5"); null si no es un número finito positivo. */
@@ -116,7 +120,7 @@ export interface TokenRow {
   status: string | null;
 }
 
-const PURPOSES: readonly string[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias'];
+const PURPOSES: readonly string[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias', 'escaner', 'descuento', 'apertura_caja', 'retiro_caja'];
 
 /** Respuesta de GET /security/tokens: `{ items }` o un arreglo. Descarta filas incompletas. */
 export function parseTokenList(json: unknown): TokenRow[] {

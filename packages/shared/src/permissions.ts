@@ -51,6 +51,7 @@ const GERENTE: Permission[] = [
 
 const VENDEDOR: Permission[] = [
   'productos.ver', 'inventario.ver', 'ventas.crear', 'ventas.ver_propias', 'tickets.imprimir_propios',
+  'caja.abrir', // el vendedor puede abrir caja; cerrarla exige token o contraseña de administrador
 ];
 
 const DESARROLLADOR: Permission[] = ['sistema.diagnostico', 'sync.estado', 'respaldos.ver'];

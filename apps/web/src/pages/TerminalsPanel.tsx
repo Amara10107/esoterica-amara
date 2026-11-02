@@ -11,7 +11,7 @@ import { formatMxDateTime } from '@amara/shared';
 import { api, asList } from '../lib/api.ts';
 import { errorMessage, useAsync } from '../lib/hooks.ts';
 import {
-  KIND_LABEL, buildCredentials, buildNewTerminalPayload, credentialsText, isTerminalRevoked, suggestTerminalCode, unwrapTerminal,
+  KIND_LABEL, buildCredentials, buildEditTerminalPayload, buildNewTerminalPayload, credentialsText, isTerminalRevoked, suggestTerminalCode, unwrapTerminal,
   type NewTerminalForm, type TerminalKind,
 } from '../lib/terminals.ts';
 import type { Terminal } from '../lib/types.ts';
@@ -26,7 +26,11 @@ export function TerminalsCard() {
   const terminals = useAsync((s) => api.get<unknown>('/admin/terminals', undefined, s).then((d) => asList<Terminal>(d)), []);
   const [creating, setCreating] = useState(false);
   const [creds, setCreds] = useState<TerminalCredentials | null>(null);
+  const [viewing, setViewing] = useState(false); // true = solo consulta (sin token)
+  const [credsBranchIds, setCredsBranchIds] = useState<string[] | null>(null);
+  const [editing, setEditing] = useState<Terminal | null>(null);
   const [revoke, setRevoke] = useState<Terminal | null>(null);
+  const [removing, setRemoving] = useState<Terminal | null>(null);
   const [busy, setBusy] = useState(false);
   const [issuingId, setIssuingId] = useState<string | null>(null);
 
@@ -42,6 +46,8 @@ export function TerminalsCard() {
       if (!c.token) {
         notify('El servidor no devolvió el token. Inténtalo de nuevo.', 'error');
       } else {
+        setViewing(false);
+        setCredsBranchIds(t.branchIds ?? [t.branchId]);
         setCreds(c);
       }
       terminals.reload();
@@ -57,8 +63,23 @@ export function TerminalsCard() {
     setBusy(true);
     try {
       await api.post(`/admin/terminals/${revoke.id}/revoke`, {}, { reauth: true });
-      notify('Token de terminal revocado.');
+      notify('Terminal desconectada: ya no puede sincronizar.');
       setRevoke(null);
+      terminals.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRemove = async () => {
+    if (!removing) return;
+    setBusy(true);
+    try {
+      const r = await api.delete<{ archived?: boolean }>(`/admin/terminals/${removing.id}`, { reauth: true });
+      notify(r?.archived ? 'Terminal eliminada. Tenía historial, así que se archivó (ya no aparece y quedó desconectada).' : 'Terminal eliminada.');
+      setRemoving(null);
       terminals.reload();
     } catch (e) {
       notify(errorMessage(e), 'error');
@@ -108,15 +129,28 @@ export function TerminalsCard() {
                       <td><strong>{t.code}</strong></td>
                       <td>{t.name}</td>
                       <td>{t.assignedTo || <span className="muted">-</span>}</td>
-                      <td>{branchName(t.branchId)}</td>
+                      <td>{(t.branchIds?.length ? t.branchIds : [t.branchId]).map((b) => branchName(b)).join(' y ')}</td>
                       <td>{t.kind === 'movil' ? 'Móvil' : 'PC (escritorio)'}</td>
                       <td>{t.lastSyncAt ? formatMxDateTime(t.lastSyncAt) : <span className="muted">Nunca</span>}</td>
                       <td>{isTerminalRevoked(t) ? <Badge tone="danger">Token revocado</Badge> : <Badge tone="ok">Activa</Badge>}</td>
                       <td className="row-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            setViewing(true);
+                            setCredsBranchIds(t.branchIds ?? [t.branchId]);
+                            setCreds(buildCredentials({ id: t.id, code: t.code, name: t.name, kind: t.kind, branchId: t.branchId, assignedTo: t.assignedTo ?? null }, null));
+                          }}
+                        >
+                          Ver
+                        </button>
+                        <button type="button" className="btn btn-sm" onClick={() => setEditing(t)}>Editar</button>
                         <button type="button" className="btn btn-sm" disabled={issuingId === t.id} onClick={() => issueToken(t)}>
                           {issuingId === t.id ? 'Emitiendo...' : 'Emitir token'}
                         </button>
-                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRevoke(t)}>Revocar</button>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRevoke(t)}>Desconectar</button>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRemoving(t)}>Eliminar</button>
                       </td>
                     </tr>
                   ))}
@@ -130,8 +164,10 @@ export function TerminalsCard() {
         <NewTerminalModal
           existingCodes={existingCodes}
           onClose={() => setCreating(false)}
-          onCreated={(c) => {
+          onCreated={(c, ids) => {
             setCreating(false);
+            setViewing(false);
+            setCredsBranchIds(ids);
             setCreds(c);
             // La lista se actualiza sola: no hace falta recargar la página.
             terminals.reload();
@@ -139,12 +175,31 @@ export function TerminalsCard() {
           onListChanged={terminals.reload}
         />
       )}
-      {creds && <CredentialsModal creds={creds} branchLabel={branchName(creds.branchId)} onClose={() => setCreds(null)} />}
+      {creds && (
+        <CredentialsModal
+          creds={creds}
+          viewOnly={viewing}
+          branchLabel={(credsBranchIds ?? [creds.branchId]).map((b) => branchName(b)).join(' y ')}
+          onClose={() => setCreds(null)}
+        />
+      )}
+      {editing && <EditTerminalModal terminal={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify('Terminal actualizada.'); terminals.reload(); }} />}
+      {removing && (
+        <ConfirmDialog
+          title="Eliminar terminal"
+          message={`¿Eliminar la terminal ${removing.code} (${removing.name})? Quedará desconectada. Si nunca se usó se borra; si ya tiene ventas o cortes se archiva para no perder el historial. Pedirá tu contraseña.`}
+          confirmLabel="Eliminar"
+          danger
+          busy={busy}
+          onCancel={() => setRemoving(null)}
+          onConfirm={doRemove}
+        />
+      )}
       {revoke && (
         <ConfirmDialog
-          title="Revocar token de terminal"
-          message={`La terminal ${revoke.name} dejará de poder sincronizar hasta que emitas un token nuevo. Pedirá tu contraseña.`}
-          confirmLabel="Revocar"
+          title="Desconectar terminal"
+          message={`La terminal ${revoke.name} se desconecta ya: dejará de poder sincronizar hasta que emitas un token nuevo. Pedirá tu contraseña.`}
+          confirmLabel="Desconectar"
           danger
           busy={busy}
           onCancel={() => setRevoke(null)}
@@ -160,7 +215,7 @@ export function TerminalsCard() {
 function NewTerminalModal(props: {
   existingCodes: string[];
   onClose: () => void;
-  onCreated: (c: TerminalCredentials) => void;
+  onCreated: (c: TerminalCredentials, branchIds: string[]) => void;
   onListChanged: () => void;
 }) {
   const { branches } = useBranches();
@@ -168,7 +223,8 @@ function NewTerminalModal(props: {
   const [form, setForm] = useState<NewTerminalForm>({
     kind: 'escritorio',
     person: '',
-    branchId: branches.length === 1 ? branches[0]!.id : '',
+    branchId: '',
+    branchIds: branches.length === 1 ? [branches[0]!.id] : [],
     code: suggestTerminalCode('escritorio', props.existingCodes),
   });
   const codeTouched = useRef(false);
@@ -211,7 +267,7 @@ function NewTerminalModal(props: {
     } catch (err) {
       notify(`La terminal se creó, pero no se emitió el token: ${errorMessage(err)} Usa "Emitir token" en la lista.`, 'error');
     }
-    props.onCreated(buildCredentials({ ...created, assignedTo: created.assignedTo ?? r.payload.assignedTo }, tokenResponse, r.payload.assignedTo));
+    props.onCreated(buildCredentials({ ...created, assignedTo: created.assignedTo ?? r.payload.assignedTo }, tokenResponse, r.payload.assignedTo), r.payload.branchIds ?? [r.payload.branchId]);
   };
 
   const dirty = form.person.trim() !== '';
@@ -253,13 +309,8 @@ function NewTerminalModal(props: {
         <Field label="Nombre de la persona" required error={errors.person}>
           <input value={form.person} maxLength={40} autoFocus placeholder="Ej. Ana" onChange={(e) => setForm({ ...form, person: e.target.value })} />
         </Field>
-        <Field label="Sucursal" required error={errors.branchId}>
-          <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })}>
-            <option value="">Elige una sucursal</option>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
+        <Field label="Sucursales donde trabajará" required error={errors.branchId} hint="Marca una o las dos. La primera que marques es la principal.">
+          <BranchChecks value={form.branchIds ?? []} onChange={(ids) => setForm({ ...form, branchIds: ids })} />
         </Field>
         <Field label="Código sugerido" hint="Se genera solo (P = PC, M = móvil). Puedes cambiarlo: 1 a 3 letras o números, único." error={errors.code}>
           <input
@@ -279,7 +330,7 @@ function NewTerminalModal(props: {
 
 /* ------------------------------------------------------ Modal 2: datos generados */
 
-function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: string; onClose: () => void }) {
+function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: string; viewOnly?: boolean; onClose: () => void }) {
   const c = props.creds;
   const rows: { label: string; value: string }[] = [
     { label: 'ID', value: c.id },
@@ -302,7 +353,11 @@ function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: stri
         </>
       }
     >
-      {c.token ? (
+      {props.viewOnly ? (
+        <Alert tone="info" title="Solo consulta">
+          Por seguridad el token de activación no se puede volver a mostrar (el servidor no lo guarda). Si hace falta, usa "Emitir token" para generar uno nuevo.
+        </Alert>
+      ) : c.token ? (
         <Alert tone="warn" title="Cópialo ahora">
           El token de activación solo se muestra una vez. Pégalo en la configuración de la terminal; no lo compartas por chat.
         </Alert>
@@ -329,6 +384,76 @@ function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: stri
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------- Sucursales (una o varias) */
+
+function BranchChecks(props: { value: string[]; onChange: (ids: string[]) => void }) {
+  const { branches } = useBranches();
+  const toggle = (id: string) => props.onChange(props.value.includes(id) ? props.value.filter((x) => x !== id) : [...props.value, id]);
+  return (
+    <div className="chips" role="group" aria-label="Sucursales">
+      {branches.map((b) => (
+        <button key={b.id} type="button" role="checkbox" aria-checked={props.value.includes(b.id)} className={`chip ${props.value.includes(b.id) ? 'chip-active' : ''}`} onClick={() => toggle(b.id)}>
+          {props.value.includes(b.id) ? '✓ ' : ''}{b.name}
+        </button>
+      ))}
+      {branches.length > 1 && (
+        <button type="button" className="chip" onClick={() => props.onChange(branches.map((b) => b.id))}>Las dos / todas</button>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Editar terminal */
+
+function EditTerminalModal(props: { terminal: Terminal; onClose: () => void; onSaved: () => void }) {
+  const t = props.terminal;
+  const [person, setPerson] = useState(t.assignedTo ?? '');
+  const [branchIds, setBranchIds] = useState<string[]>(t.branchIds?.length ? t.branchIds : [t.branchId]);
+  const [errors, setErrors] = useState<{ person?: string; branchIds?: string }>({});
+  const [serverError, setServerError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setServerError('');
+    const r = buildEditTerminalPayload(t.kind, { person, branchIds });
+    setErrors(r.errors);
+    if (!r.payload) return;
+    setBusy(true);
+    try {
+      await api.patch(`/admin/terminals/${t.id}`, r.payload);
+      props.onSaved();
+    } catch (err) {
+      setServerError(errorMessage(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Editar terminal ${t.code}`}
+      size="sm"
+      onClose={props.onClose}
+      footer={
+        <>
+          <CloseButton label="Cancelar" disabled={busy} />
+          <button type="submit" form="edit-terminal-form" className="btn btn-primary" disabled={busy}>{busy ? 'Guardando...' : 'Guardar cambios'}</button>
+        </>
+      }
+    >
+      <form id="edit-terminal-form" className="form" onSubmit={submit} noValidate>
+        {serverError && <Alert tone="error">{serverError}</Alert>}
+        <Field label="Nombre de la persona" required error={errors.person}>
+          <input value={person} maxLength={40} onChange={(e) => setPerson(e.target.value)} />
+        </Field>
+        <Field label="Sucursales donde trabajará" required error={errors.branchIds} hint="Una o las dos. Los cambios aplican la próxima vez que la terminal sincronice.">
+          <BranchChecks value={branchIds} onChange={setBranchIds} />
+        </Field>
+      </form>
     </Modal>
   );
 }

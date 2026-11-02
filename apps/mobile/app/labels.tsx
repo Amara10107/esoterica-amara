@@ -148,6 +148,6 @@ const styles = StyleSheet.create({
   step: { width: 44, height: 44, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   stepText: { fontSize: 22, fontWeight: '800', color: colors.text },
   qty: { minWidth: 28, textAlign: 'center', fontSize: 18, fontWeight: '900', color: colors.text },
-  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.white },
+  result: { flexDirection: 'row', alignItems: 'center', padding: space.md, minHeight: 60, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card },
   plus: { fontSize: 28, fontWeight: '800', color: colors.gold, paddingHorizontal: space.sm },
 });

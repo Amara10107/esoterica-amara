@@ -31,6 +31,8 @@ const TYPE_LABEL: Record<string, string> = {
   'stock.movement': 'Movimiento de inventario',
   'cash.open': 'Apertura de caja',
   'cash.movement': 'Movimiento de caja',
+  'advance.create': 'Anticipo de limpia',
+  'advance.entry': 'Movimiento de anticipo',
   'cash.close': 'Corte de caja',
 };
 

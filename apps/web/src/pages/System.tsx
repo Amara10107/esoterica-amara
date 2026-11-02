@@ -12,8 +12,11 @@ import type { AdminUser, BackupRow, SyncStatus } from '../lib/types.ts';
 import type { AuditView } from '../lib/types-v2.ts';
 import { filterAuditRows, normalizeAuditRows } from '../lib/audit.ts';
 import { Alert, Badge, Card, Empty, ErrorBox, KpiCard, Modal, PageHeader, Spinner, TableWrap } from '../components/ui.tsx';
-import { DateRangeBar } from '../components/common.tsx';
-import { useAuth, useBranches } from '../context.tsx';
+import { MovementsTable } from '../components/MovementsTable.tsx';
+import { MOVEMENT_LABEL } from '../lib/inventory.ts';
+import type { StockMovementRow } from '../lib/types.ts';
+import { BranchSelect, DateRangeBar } from '../components/common.tsx';
+import { useAuth, useBranches, useToast } from '../context.tsx';
 
 /* --------------------------------------------------------------- Sincronización */
 
@@ -130,7 +133,7 @@ export function BackupsPage() {
  * `at` y un `detail` OBJETO, y la pantalla intentaba pintar ese objeto. Ahora todo pasa por
  * normalizeAuditRows (texto seguro), y hay estados visibles de carga, error y vacío.
  */
-export function AuditPage() {
+function SystemAudit() {
   const { can } = useAuth();
   const today = mxTodayKey();
   const [range, setRange] = useState({ from: addDays(today, -6), to: today });
@@ -155,11 +158,11 @@ export function AuditPage() {
 
   return (
     <>
-      <PageHeader
-        title="Auditoría"
-        subtitle="Quién cambió qué y cuándo: precios, usuarios, cancelaciones, ajustes y más."
-        actions={<button type="button" className="btn" onClick={res.reload} disabled={res.loading}>{res.loading ? 'Actualizando...' : 'Actualizar'}</button>}
-      />
+      <Alert tone="warn" title="Auditoría del sistema (registro técnico)">
+        Es el registro completo de todo lo que pasa en el sistema (inicios de sesión, cambios de precios, usuarios, cortes...). Está pensado para el desarrollador;
+        para revisar quién agregó o sacó mercancía usa «Auditar entradas y salidas».
+        <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={res.reload} disabled={res.loading}>{res.loading ? 'Actualizando...' : 'Actualizar'}</button>
+      </Alert>
       <div className="filters">
         <DateRangeBar from={range.from} to={range.to} onChange={(from, to) => setRange({ from, to })} />
         <label className="inline-field"><span>Entidad</span><input value={entity} placeholder="ej. variant, user, sale" onChange={(e) => setEntity(e.target.value)} /></label>
@@ -232,6 +235,118 @@ export function DiagnosticsPage() {
           </TableWrap>
         </Card>
       )}
+    </>
+  );
+}
+
+
+/* ------------------------------------------------------------------- Auditoría */
+
+type AuditTab = 'inventario' | 'sistema';
+
+const STOCK_TYPES = ['entrada', 'salida', 'ajuste', 'conteo', 'transferencia_entrada', 'transferencia_salida'] as const;
+
+/** Auditoría de entradas y salidas de mercancía: quién, cuánto, por qué y cuándo; y quién agregó/sacó más. */
+function StockAudit() {
+  const today = mxTodayKey();
+  const [range, setRange] = useState({ from: addDays(today, -6), to: today });
+  const [branchId, setBranchId] = useState('');
+  const [type, setType] = useState('');
+  const [text, setText] = useState('');
+  const valid = range.from !== '' && range.to !== '' && range.from <= range.to;
+  const res = useAsync(
+    (s) => api.get<unknown>('/inventory/movements', { branchId, from: range.from, to: range.to }, s).then((d) => asList<StockMovementRow>(d)),
+    [range.from, range.to, branchId],
+    valid,
+  );
+  const base = (res.data ?? []).filter((m) => (STOCK_TYPES as readonly string[]).includes(m.type));
+  const needle = text.trim().toLowerCase();
+  const rows = base.filter(
+    (m) => (!type || m.type === type) && (!needle || `${m.productName ?? ''} ${m.variantLabel ?? ''} ${m.userName ?? ''} ${m.reason}`.toLowerCase().includes(needle)),
+  );
+  const byUser = new Map<string, { name: string; added: number; removed: number; moves: number }>();
+  for (const m of rows) {
+    const key = m.userId;
+    const cur = byUser.get(key) ?? { name: m.userName ?? m.userId.slice(0, 8), added: 0, removed: 0, moves: 0 };
+    if (m.delta > 0) cur.added += m.delta;
+    else cur.removed += -m.delta;
+    cur.moves += 1;
+    byUser.set(key, cur);
+  }
+  const people = [...byUser.values()].sort((a, b) => b.added - a.added);
+  const top = people[0];
+
+  return (
+    <>
+      <div className="filters">
+        <DateRangeBar from={range.from} to={range.to} onChange={(from, to) => setRange({ from, to })} />
+        <label className="inline-field"><span>Sucursal</span><BranchSelect value={branchId} onChange={setBranchId} allLabel="Todas" /></label>
+        <label className="inline-field">
+          <span>Tipo</span>
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">Entradas, salidas, ajustes y conteos</option>
+            {STOCK_TYPES.map((t) => <option key={t} value={t}>{MOVEMENT_LABEL[t] ?? t}</option>)}
+          </select>
+        </label>
+        <label className="inline-field grow"><span>Buscar</span><input type="search" value={text} placeholder="Producto, persona o motivo" onChange={(e) => setText(e.target.value)} /></label>
+      </div>
+      {!valid && <Alert tone="warn">Elige un rango de fechas válido.</Alert>}
+      {valid && res.loading && !res.data && <Spinner />}
+      {res.error && <ErrorBox error={res.error} onRetry={res.reload} />}
+      {valid && res.data && (
+        <>
+          {top && top.added > 0 && (
+            <Alert tone="info" title="Quién agregó más en este periodo">
+              {top.name} agregó {formatQty(top.added)} pieza(s) en {top.moves} movimiento(s).
+            </Alert>
+          )}
+          <Card title="Por persona">
+            {people.length === 0 ? <Empty>No hay movimientos en ese rango.</Empty> : (
+              <TableWrap>
+                <table className="table">
+                  <thead><tr><th>Persona</th><th className="num">Movimientos</th><th className="num">Agregó (piezas)</th><th className="num">Sacó o descontó (piezas)</th></tr></thead>
+                  <tbody>
+                    {people.map((p) => (
+                      <tr key={p.name}><td>{p.name}</td><td className="num">{p.moves}</td><td className="num pos strong">{formatQty(p.added)}</td><td className="num neg">{formatQty(p.removed)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
+          <Card title="Detalle de movimientos">
+            <MovementsTable rows={rows.slice(0, 500)} />
+            {rows.length > 500 && <p className="muted small">Se muestran 500 de {rows.length}; acota las fechas para ver el resto.</p>}
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
+export function AuditPage() {
+  const { can } = useAuth();
+  const { notify } = useToast();
+  const canStock = can('inventario.ver');
+  const [tab, setTab] = useState<AuditTab>(canStock ? 'inventario' : 'sistema');
+  return (
+    <>
+      <PageHeader title="Auditoría" subtitle="Quién agregó o sacó mercancía y cuándo. El registro técnico del sistema está en su propio botón." />
+      <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+        {canStock && (
+          <button type="button" className={`btn ${tab === 'inventario' ? 'btn-primary' : ''}`} onClick={() => setTab('inventario')}>
+            Auditar entradas y salidas
+          </button>
+        )}
+        <button
+          type="button"
+          className={`btn ${tab === 'sistema' ? 'btn-primary' : ''}`}
+          onClick={() => { setTab('sistema'); notify('La auditoría del sistema es un registro técnico, pensado para el desarrollador.', 'info'); }}
+        >
+          Auditoría del sistema
+        </button>
+      </div>
+      {tab === 'inventario' && canStock ? <StockAudit /> : <SystemAudit />}
     </>
   );
 }

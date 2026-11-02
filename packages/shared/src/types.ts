@@ -33,7 +33,9 @@ export type OpType =
   | 'stock.movement'
   | 'cash.open'
   | 'cash.movement'
-  | 'cash.close';
+  | 'cash.close'
+  | 'advance.create'
+  | 'advance.entry';
 
 export interface Money {
   cents: number;
@@ -179,6 +181,8 @@ export interface CashMovement {
   concept: string;
   userId: string;
   createdAt: string;
+  /** v2.3. Si es la entrada de efectivo de un abono de anticipo de limpia. */
+  advanceId?: string;
 }
 
 export interface Grant {
@@ -217,8 +221,8 @@ export interface SyncResult {
 // ───────────────────────────── v2: seguridad ─────────────────────────────
 
 /** v2. Para qué sirve un token de seguridad. */
-export type TokenPurpose = 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias';
-export const TOKEN_PURPOSES: readonly TokenPurpose[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias'];
+export type TokenPurpose = 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias' | 'escaner' | 'descuento' | 'apertura_caja' | 'retiro_caja';
+export const TOKEN_PURPOSES: readonly TokenPurpose[] = ['cierre_caja', 'devolucion', 'cancelacion', 'limpias', 'escaner', 'descuento', 'apertura_caja', 'retiro_caja'];
 
 /** v2. Token de seguridad (sin el código: solo el servidor conoce `hash` y `salt`). */
 export interface SecurityToken {

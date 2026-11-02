@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildCredentials, buildNewTerminalPayload, buildTerminalName, credentialsText, isTerminalRevoked, suggestTerminalCode, unwrapTerminal,
+  buildCredentials, buildEditTerminalPayload, buildNewTerminalPayload, buildTerminalName, credentialsText, isTerminalRevoked, suggestTerminalCode, unwrapTerminal,
 } from './terminals.ts';
 
 describe('código sugerido', () => {
@@ -34,6 +34,20 @@ describe('nombre y formulario', () => {
     expect(r.payload).toBeNull();
     expect(Object.keys(r.errors).sort()).toEqual(['branchId', 'code', 'person']);
     expect(buildNewTerminalPayload({ kind: 'escritorio', person: 'Ana', branchId: 'b', code: 'p1' }, ['P1']).errors.code).toMatch(/ya lo usa/);
+  });
+});
+
+describe('sucursales de la terminal (v2.1)', () => {
+  it('permite una o las dos sucursales y la primera es la principal', () => {
+    const r = buildNewTerminalPayload({ kind: 'movil', person: 'Ana', branchId: '', branchIds: ['b1', 'b2'], code: 'M1' }, []);
+    expect(r.payload).toEqual({ code: 'M1', name: 'Móvil de Ana', branchId: 'b1', branchIds: ['b1', 'b2'], kind: 'movil', assignedTo: 'Ana' });
+  });
+  it('exige al menos una sucursal', () => {
+    expect(buildNewTerminalPayload({ kind: 'movil', person: 'Ana', branchId: '', branchIds: [], code: 'M1' }, []).errors.branchId).toMatch(/al menos una/);
+  });
+  it('editar: valida persona y sucursales', () => {
+    expect(buildEditTerminalPayload('escritorio', { person: ' Luis ', branchIds: ['b2', 'b2'] }).payload).toEqual({ name: 'PC de Luis', assignedTo: 'Luis', branchIds: ['b2'] });
+    expect(buildEditTerminalPayload('escritorio', { person: 'L', branchIds: [] }).payload).toBeNull();
   });
 });
 

@@ -12,7 +12,7 @@ import { HtmlFrame } from './HtmlFrame.tsx';
 import { Modal } from './Modal.tsx';
 
 export function LabelPreviewModal({
-  labels, options, printHtml, onClose, onPrinted,
+  labels, options, printHtml, onClose, onPrinted, onAddMore,
 }: {
   labels: LabelRender[];
   options: LabelSheetOptions;
@@ -20,6 +20,8 @@ export function LabelPreviewModal({
   printHtml: string;
   onClose: () => void;
   onPrinted: () => void;
+  /** Cierra la vista previa y lleva a seguir agregando productos al mismo lote. */
+  onAddMore?: () => void;
 }) {
   const { toast } = useFeedback();
   const [busy, setBusy] = useState<'print' | 'pdf' | null>(null);
@@ -60,6 +62,7 @@ export function LabelPreviewModal({
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={busy !== null}>Cerrar</button>
+          {onAddMore && <button className="btn" onClick={onAddMore} disabled={busy !== null}>+ Agregar más etiquetas</button>}
           <button className="btn" onClick={() => void run('pdf')} disabled={busy !== null}>{busy === 'pdf' ? 'Generando PDF...' : 'Guardar PDF'}</button>
           <button className="btn btn-gold btn-lg" onClick={() => void run('print')} disabled={busy !== null}>{busy === 'print' ? 'Enviando...' : 'Imprimir'}</button>
         </>

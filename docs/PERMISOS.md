@@ -33,7 +33,7 @@
 | `ventas.devolver` | Sí | — | — | Registrar devoluciones (con motivo; reautenticación en la API). **v2:** el vendedor puede hacerlo SOLO con autorización (sección 4b) |
 | `tickets.imprimir_propios` | Sí | Sí | — | Imprimir/reimprimir los tickets de sus propias ventas |
 | `tickets.archivo` | Sí | — | — | Archivo de tickets completo |
-| `caja.abrir` | Sí | — | — | Abrir la caja |
+| `caja.abrir` | Sí | Sí | — | Abrir la caja (el vendedor la abre; cerrarla exige token o contraseña de administrador) |
 | `caja.movimientos` | Sí | — | — | Entradas, retiros y gastos de efectivo |
 | `caja.corte` | Sí | — | — | Corte de caja e historial de cortes. **v2:** el vendedor puede cerrar la caja SOLO con autorización (sección 4b); el historial de cortes sigue siendo del gerente |
 | `estadisticas.ver` | Sí | — | — | Dashboard, "Resumen de ventas de hoy", informes |
@@ -98,6 +98,8 @@ Los permisos de la matriz **no cambian** (no se agregó ninguno). Lo nuevo es qu
 | Cancelar una venta | `cancelacion` | Directo | Con contraseña de un gerente **o** token | Nunca |
 | Devolver mercancía | `devolucion` | Directo | Con contraseña de un gerente **o** token | Nunca |
 | Hacer una **Limpia** (venta `type:'limpia'`) | `limpias` | Directo | Con contraseña de un gerente **o** token | Nunca |
+| Dar **descuento** en una venta normal | `descuento` | Directo | Con contraseña de un gerente **o** token | Nunca |
+| Descuento en una **Limpia** | — | Directo | Nunca (solo administrador) | Nunca |
 
 - **Contraseña de administrador:** la de un gerente **activo** de esa sucursal. La contraseña solo viaja a `POST /security/verify` (o se compara contra el verificador descargado si no hay internet); nunca se guarda en la operación, solo el id del gerente.
 - **Token:** código de 6 a 10 caracteres que crea el gerente (`POST /security/tokens`, con `x-reauth`) con propósitos, vigencia (1 min a 7 días), sucursal, usuario destino y máximo de usos opcionales. El código se muestra **una sola vez**; la base solo guarda sal + hash. El gerente puede revocarlo cuando quiera.
@@ -131,3 +133,5 @@ Hay pruebas escritas (todas **sin ejecutar** aún):
 - `apps/mobile/test/lib-misc.test.ts` → casos de `entry-guard`.
 - Pruebas de endpoints de la API (escenario 10 y 22): `apps/api/test/route-permissions.test.ts` (supertest, **no ejecutadas** en este entorno: faltan dependencias) cubre estadísticas, tokens, configuración de extras, resumen de hoy y las acciones con autorización; procedimiento manual en [PRUEBAS.md](PRUEBAS.md).
 - **v2:** `packages/shared/test/tokens.test.ts`, `packages/database/test/v2.test.ts`, `apps/api/test/sync-apply-v2.test.ts` y `apps/api/test/security.test.ts` cubren tokens y autorizaciones.
+| Abrir caja **desde el teléfono** | `apertura_caja` | Con su contraseña | Con contraseña de un gerente **o** token (solo emergencias) | Nunca |
+| Sacar dinero de caja (retiro/gasto) | `retiro_caja` | Con contraseña de un gerente **o** token | Libre | Nunca |

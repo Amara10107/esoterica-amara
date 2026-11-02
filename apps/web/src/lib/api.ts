@@ -137,6 +137,7 @@ export const api = {
     request<T>('PATCH', path, { ...opts, body }),
   put: <T>(path: string, body: unknown, opts: Omit<RequestOptions, 'body'> = {}) =>
     request<T>('PUT', path, { ...opts, body }),
+  delete: <T>(path: string, opts: Omit<RequestOptions, 'body'> = {}) => request<T>('DELETE', path, opts),
 };
 
 /** Acepta `[...]` o `{ items: [...] }` (las listas paginadas de la API) y devuelve siempre un arreglo. */

@@ -30,11 +30,20 @@ export default function BranchScreen() {
   }, [app.phase, app.myBranches.length]);
 
   if (!app.session) return <Loading />;
+  // Ya en uso, solo el gerente cambia de sucursal (la primera selección, al configurar, es libre).
+  if (app.phase === 'listo' && app.session.user.role !== 'gerente') {
+    return (
+      <Screen>
+        <Banner kind="warn" text="Solo el gerente puede cambiar la sucursal de este teléfono." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
       <H2>Elige tu sucursal</H2>
-      <Muted>Solo aparecen las sucursales que el gerente te autorizó. La primera vez se descarga el catálogo y requiere internet.</Muted>
+      <Banner kind={app.online ? 'ok' : 'warn'} text={app.online ? 'En línea: puedes elegir cualquiera de tus sucursales.' : 'Sin conexión: solo puedes volver a una sucursal que ya descargaste. Para una nueva se necesita internet.'} />
+      <Muted>Solo aparecen las sucursales que el gerente te autorizó. La primera vez se descarga el catálogo y requiere internet. Si una sucursal te rechaza, pide al gerente que la agregue a tu terminal (Terminales → Editar).</Muted>
       {app.myBranches.length === 0 ? <Banner kind="error" text="Tu usuario no tiene sucursales asignadas. Pide al gerente que te asigne una." /> : null}
       {app.myBranches.map((b) => (
         <Button

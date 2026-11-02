@@ -12,6 +12,10 @@ export const TOKEN_PURPOSES: { id: TokenPurpose; label: string; hint: string }[]
   { id: 'devolucion', label: 'Devolución', hint: 'Permite registrar una devolución.' },
   { id: 'cancelacion', label: 'Cancelación', hint: 'Permite cancelar una venta.' },
   { id: 'limpias', label: 'Limpias', hint: 'Permite entrar a Limpias a un vendedor.' },
+  { id: 'escaner', label: 'Teléfono como escáner', hint: 'Permite a un vendedor vincular su teléfono como escáner de la PC.' },
+  { id: 'descuento', label: 'Descuentos', hint: 'Permite a un vendedor aplicar un descuento en una venta.' },
+  { id: 'apertura_caja', label: 'Apertura de caja (emergencia)', hint: 'Permite a un vendedor abrir la caja del teléfono. Solo para emergencias.' },
+  { id: 'retiro_caja', label: 'Retiros y gastos de caja', hint: 'Permite a un vendedor sacar dinero de la caja (comida, pagos, etc.).' },
 ];
 
 export const PURPOSE_LABEL: Record<TokenPurpose, string> = {
@@ -19,6 +23,10 @@ export const PURPOSE_LABEL: Record<TokenPurpose, string> = {
   devolucion: 'Devolución',
   cancelacion: 'Cancelación',
   limpias: 'Limpias',
+  escaner: 'Teléfono como escáner',
+  descuento: 'Descuentos',
+  apertura_caja: 'Apertura de caja (emergencia)',
+  retiro_caja: 'Retiros y gastos de caja',
 };
 
 export const MIN_DURATION_MIN = 1;

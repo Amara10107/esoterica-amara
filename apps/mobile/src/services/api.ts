@@ -26,7 +26,7 @@ export class ApiClient {
     this.o = o;
   }
 
-  async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, opts: { body?: unknown; auth?: boolean; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
+  async request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, opts: { body?: unknown; auth?: boolean; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
     const base = this.o.getBaseUrl().trim().replace(/\/+$/, '');
     if (!base) throw new ApiError(0, 'Falta la dirección del servidor. Escríbela en "Servidor".');
     const token = opts.auth === false ? null : await this.o.getToken();
@@ -65,6 +65,16 @@ export class ApiClient {
 
   post<T>(path: string, body?: unknown, opts?: { auth?: boolean; timeoutMs?: number; headers?: Record<string, string> }): Promise<T> {
     return this.request<T>('POST', path, { body, ...opts });
+  }
+
+  /** v2.1. DELETE (eliminar terminales). */
+  delete<T>(path: string, opts?: { timeoutMs?: number; headers?: Record<string, string> }): Promise<T> {
+    return this.request<T>('DELETE', path, { ...opts });
+  }
+
+  /** v2.1. PATCH (editar terminales). */
+  patch<T>(path: string, body?: unknown, opts?: { timeoutMs?: number; headers?: Record<string, string> }): Promise<T> {
+    return this.request<T>('PATCH', path, { body, ...opts });
   }
 
   /** v2. PUT (categorías de Extras). */

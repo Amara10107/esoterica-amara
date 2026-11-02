@@ -31,7 +31,7 @@ export type SaleV2 = Omit<Sale, 'items'> & {
 
 /* ----------------------------------------------------------- Tokens de seguridad */
 
-export type TokenPurpose = 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias';
+export type TokenPurpose = 'cierre_caja' | 'devolucion' | 'cancelacion' | 'limpias' | 'escaner' | 'descuento' | 'apertura_caja' | 'retiro_caja';
 
 export interface SecurityToken {
   id: string;
@@ -136,6 +136,7 @@ export interface TerminalRecord {
   name: string;
   kind: 'escritorio' | 'movil';
   branchId: string;
+  branchIds?: string[];
   assignedTo?: string | null;
 }
 

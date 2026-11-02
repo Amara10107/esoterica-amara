@@ -1,5 +1,5 @@
 /** Implementación de `SyncRepo` sobre MongoDB. Toda inserción idempotente usa _id único y trata E11000 como "ya existía". */
-import type { CachedSecurityToken, CashMovement, Grant, Sale, SaleAdjustment } from '@amara/shared';
+import type { Advance, AdvanceEntry, CachedSecurityToken, CashMovement, Grant, Sale, SaleAdjustment } from '@amara/shared';
 import { col } from './db.ts';
 import { incStock, insertMovement } from './stock.ts';
 import type {
@@ -66,8 +66,8 @@ export function createMongoSyncRepo(): SyncRepo {
       return rec;
     },
     async getTerminal(id) {
-      const t = await col('terminals').findOne({ _id: id }, { projection: { branchId: 1, code: 1 } });
-      return t ? ({ id: t._id, branchId: t.branchId, code: t.code } as TerminalRec) : null;
+      const t = await col('terminals').findOne({ _id: id }, { projection: { branchId: 1, branchIds: 1, code: 1 } });
+      return t ? ({ id: t._id, branchId: t.branchId, branchIds: t.branchIds ?? [t.branchId], code: t.code } as TerminalRec) : null;
     },
     async listGrants(sellerId, branchId) {
       const docs = await col('grants').find({ sellerId, branchId }).sort({ startsAt: -1 }).limit(200).toArray();
@@ -142,6 +142,12 @@ export function createMongoSyncRepo(): SyncRepo {
       }
     },
     insertCashMovement: (m: CashMovement & { receivedAt: string; syncOpId: string }) => insertIdempotent('cash_movements', m as any),
+    async getAdvance(id) {
+      const d = await col('advances').findOne({ _id: id });
+      return d ? strip<Advance>(d) : null;
+    },
+    insertAdvance: (a: Advance & { receivedAt: string; syncOpId: string }) => insertIdempotent('advances', a as any),
+    insertAdvanceEntry: (e: AdvanceEntry & { receivedAt: string; syncOpId: string }) => insertIdempotent('advance_entries', e as any),
     async cashDataForSession(sessionId): Promise<CashData> {
       const [sales, adjustments, movements] = await Promise.all([
         col('sales').find({ cashSessionId: sessionId }).project({ cashSessionId: 1, payments: 1 }).toArray(),

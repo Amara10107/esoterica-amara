@@ -43,6 +43,9 @@ export function SecurityTokens() {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedToken | null>(null);
   const [revoke, setRevoke] = useState<SecurityTokenRow | null>(null);
+  const [hiding, setHiding] = useState<SecurityTokenRow | null>(null);
+  // v2.4.5: lista actual o Historial (los borrados).
+  const [history, setHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   // Reloj para que "vigente/vencido" se actualice sin recargar.
   const [nowIso, setNowIso] = useState(() => new Date().toISOString());
@@ -51,7 +54,7 @@ export function SecurityTokens() {
     return () => clearInterval(t);
   }, []);
 
-  const tokens = useAsync((s) => api.get<unknown>('/security/tokens', undefined, s).then(normalizeTokenRows), []);
+  const tokens = useAsync((s) => api.get<unknown>('/security/tokens', { hidden: history ? '1' : '0' }, s).then(normalizeTokenRows), [history]);
   const users = useAsync((s) => api.get<unknown>('/admin/users', undefined, s).then((d) => asList<AdminUser>(d)), []);
   const userName = (id: string | null, row?: SecurityTokenRow) => (id ? row?.forUserName || users.data?.find((u) => u.id === id)?.name || id.slice(0, 8) : null);
 
@@ -73,6 +76,20 @@ export function SecurityTokens() {
     }
   };
 
+  const setHidden = async (tk: SecurityTokenRow, hidden: boolean) => {
+    setBusy(true);
+    try {
+      await api.post(`/security/tokens/${tk.id}/hide`, { hidden });
+      notify(hidden ? 'Token borrado. Quedó en el Historial.' : 'Token restaurado.');
+      setHiding(null);
+      tokens.reload();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -80,6 +97,7 @@ export function SecurityTokens() {
         subtitle="Códigos temporales para que un vendedor cierre caja, devuelva, cancele o entre a Limpias sin conocer tu contraseña."
         actions={
           <>
+            <button type="button" className="btn" onClick={() => setHistory((h) => !h)}>{history ? 'Ver tokens actuales' : 'Historial (borrados)'}</button>
             <button type="button" className="btn" onClick={tokens.reload} disabled={tokens.loading}>{tokens.loading ? 'Actualizando...' : 'Actualizar'}</button>
             <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>Crear token</button>
           </>
@@ -88,9 +106,9 @@ export function SecurityTokens() {
       {tokens.loading && !tokens.data && <Spinner />}
       {tokens.error && <ErrorBox error={tokens.error} onRetry={tokens.reload} />}
       {tokens.data && (
-        <Card title={`Tokens (${active} vigente${active === 1 ? '' : 's'} de ${rows.length})`}>
+        <Card title={history ? `Historial de tokens borrados (${rows.length})` : `Tokens (${active} vigente${active === 1 ? '' : 's'} de ${rows.length})`}>
           {rows.length === 0 ? (
-            <Empty>Aún no hay tokens. Usa "Crear token" para generar uno.</Empty>
+            <Empty>{history ? 'El historial está vacío: no has borrado tokens.' : 'Aún no hay tokens. Usa "Crear token" para generar uno.'}</Empty>
           ) : (
             <TableWrap>
               <table className="table">
@@ -112,7 +130,15 @@ export function SecurityTokens() {
                         </td>
                         <td className="num">{t.usedCount}{t.maxUses !== null ? ` / ${t.maxUses}` : ' / sin límite'}</td>
                         <td><Badge tone={STATUS_TONE[st]}>{STATUS_LABEL[st]}</Badge></td>
-                        <td className="row-actions">{st === 'vigente' && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRevoke(t)}>Revocar</button>}</td>
+                        <td className="row-actions">
+                          {history ? (
+                            <button type="button" className="btn btn-sm" onClick={() => void setHidden(t, false)} disabled={busy}>Restaurar</button>
+                          ) : st === 'vigente' ? (
+                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRevoke(t)}>Revocar</button>
+                          ) : (
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => setHiding(t)}>Borrar</button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -136,6 +162,17 @@ export function SecurityTokens() {
         />
       )}
       {created && <CodeModal token={created} onClose={() => setCreated(null)} />}
+      {hiding && (
+        <ConfirmDialog
+          title="Borrar token"
+          message={`El token "${hiding.label}" se quita de la lista y queda en el Historial (botón «Historial (borrados)»), donde puedes restaurarlo. Las operaciones hechas con él se conservan en la auditoría.`}
+          confirmLabel="Borrar"
+          danger
+          busy={busy}
+          onCancel={() => setHiding(null)}
+          onConfirm={() => void setHidden(hiding, true)}
+        />
+      )}
       {revoke && (
         <ConfirmDialog
           title="Revocar token"

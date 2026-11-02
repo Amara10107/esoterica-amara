@@ -10,6 +10,7 @@ import type { ActivationOptions } from '../../shared/ipc.ts';
 import { call, errorText } from '../lib/api.ts';
 import { Banner, Field } from '../components/Field.tsx';
 import { useApp } from '../state/AppState.tsx';
+import { PasswordInput } from '../components/PasswordInput.tsx';
 
 export function ActivationScreen({ onDone }: { onDone?: () => void }) {
   const { refreshDevice, settings } = useApp();
@@ -90,7 +91,7 @@ export function ActivationScreen({ onDone }: { onDone?: () => void }) {
               <input className="inp inp-lg" value={username} onChange={(e) => setUsername(e.target.value)} spellCheck={false} autoComplete="username" />
             </Field>
             <Field label="Contraseña del gerente">
-              <input className="inp inp-lg" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+              <PasswordInput className="inp inp-lg" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
             </Field>
             {error && <Banner kind="error">{error}</Banner>}
             <button className="btn btn-gold btn-lg" disabled={busy || !apiUrl.trim() || !username.trim() || !password}>

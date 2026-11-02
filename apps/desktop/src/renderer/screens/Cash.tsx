@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { MXN_DENOMINATIONS, can, formatMXN } from '@amara/shared';
 import type { CashBreakdown, CashMovementType, SalesSummary } from '@amara/shared';
 import type { CashClosureResult, CashStatus, ClosureRow, SensitiveAuth } from '../../shared/ipc.ts';
+import { NewAdvanceModal } from '../components/AdvanceModals.tsx';
 import { AuthPrompt } from '../components/AuthPrompt.tsx';
 import { DocPreviewModal } from '../components/DocPreviewModal.tsx';
 import { Banner, Field } from '../components/Field.tsx';
@@ -36,6 +37,8 @@ function ManagerCash() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<'open' | 'move' | 'close' | null>(null);
   const [moveType, setMoveType] = useState<CashMovementType>('entrada');
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  const [advanceDoc, setAdvanceDoc] = useState<{ advanceId: string; entryId: string } | null>(null);
   const [result, setResult] = useState<CashClosureResult | null>(null);
 
   useScanHandler(() => toast('info', 'En esta pantalla no se usa el escáner.'));
@@ -112,6 +115,7 @@ function ManagerCash() {
               <button className="btn" onClick={() => { setMoveType('entrada'); setModal('move'); }}>Entrada de efectivo</button>
               <button className="btn" onClick={() => { setMoveType('retiro'); setModal('move'); }}>Retiro</button>
               <button className="btn" onClick={() => { setMoveType('gasto'); setModal('move'); }}>Gasto</button>
+              <button className="btn" onClick={() => setAdvanceOpen(true)}>Anticipo de limpia</button>
               <button className="btn btn-gold" onClick={() => setModal('close')}>Corte de caja</button>
             </div>
           </div>
@@ -156,6 +160,8 @@ function ManagerCash() {
       </div>
 
       {modal === 'open' && <OpenModal onClose={() => setModal(null)} onDone={() => { setModal(null); toast('ok', 'Caja abierta.'); void load(); }} />}
+      {advanceOpen && <NewAdvanceModal onClose={() => setAdvanceOpen(false)} onDone={(r) => { setAdvanceOpen(false); setAdvanceDoc({ advanceId: r.advance.id, entryId: r.entryId }); toast('ok', r.cashRegistered ? 'Anticipo recibido y sumado al cajón.' : 'Anticipo registrado.'); void load(); }} />}
+      {advanceDoc && <DocPreviewModal doc={{ kind: 'advance', ...advanceDoc }} title="Ticket de anticipo" onClose={() => setAdvanceDoc(null)} />}
       {modal === 'move' && <MoveModal type={moveType} onClose={() => setModal(null)} onDone={() => { setModal(null); toast('ok', 'Movimiento registrado.'); void load(); }} />}
       {modal === 'close' && b && (
         <CloseModal expectedCents={b.expectedCents} onClose={() => setModal(null)} onDone={(r) => { setModal(null); setResult(r); void load(); }} />
@@ -172,6 +178,10 @@ function SellerCash() {
   const [error, setError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [done, setDone] = useState<CashClosureResult | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [moveType, setMoveType] = useState<CashMovementType | null>(null);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  const [advanceDoc, setAdvanceDoc] = useState<{ advanceId: string; entryId: string } | null>(null);
 
   useScanHandler(() => toast('info', 'En esta pantalla no se usa el escáner.'));
   const load = useCallback(() => {
@@ -194,7 +204,8 @@ function SellerCash() {
       ) : !status.open ? (
         <div className="card">
           <h3>La caja está cerrada</h3>
-          <p className="muted">Un gerente abre la caja con el fondo inicial para que se puedan registrar ventas.</p>
+          <p className="muted">Abre la caja con el fondo inicial para que se puedan registrar ventas.</p>
+          <button className="btn btn-gold btn-lg" onClick={() => setOpening(true)}>Abrir caja</button>
         </div>
       ) : (
         <div className="card">
@@ -202,8 +213,19 @@ function SellerCash() {
           <div className="muted">Abierta el {dateTime(status.openedAt!)}{status.openedByName ? ` por ${status.openedByName}` : ''}.</div>
           <p className="muted">Para cerrarla cuenta el efectivo del cajón y pide a un administrador que escriba su contraseña (o usa un token de cierre de caja). No se muestran importes esperados.</p>
           <button className="btn btn-gold btn-lg" onClick={() => setClosing(true)}>Cerrar caja</button>
+          <hr />
+          <p className="muted">Si sacas dinero del cajón (comida, pagos, etc.) debes decir para qué y un administrador lo autoriza con su contraseña o un token. Si un cliente deja dinero para una limpia, regístralo como anticipo.</p>
+          <div className="row-gap">
+            <button className="btn" onClick={() => setMoveType('gasto')}>Sacar dinero (gasto)</button>
+            <button className="btn" onClick={() => setMoveType('retiro')}>Retiro</button>
+            <button className="btn" onClick={() => setAdvanceOpen(true)}>Anticipo de limpia</button>
+          </div>
         </div>
       )}
+      {moveType && <MoveModal type={moveType} onClose={() => setMoveType(null)} onDone={() => { setMoveType(null); toast('ok', 'Movimiento registrado.'); load(); }} />}
+      {advanceOpen && <NewAdvanceModal onClose={() => setAdvanceOpen(false)} onDone={(r) => { setAdvanceOpen(false); setAdvanceDoc({ advanceId: r.advance.id, entryId: r.entryId }); toast('ok', r.cashRegistered ? 'Anticipo recibido y sumado al cajón.' : 'Anticipo registrado.'); load(); }} />}
+      {advanceDoc && <DocPreviewModal doc={{ kind: 'advance', ...advanceDoc }} title="Ticket de anticipo" onClose={() => setAdvanceDoc(null)} />}
+      {opening && <OpenModal onClose={() => setOpening(false)} onDone={() => { setOpening(false); toast('ok', 'Caja abierta.'); load(); }} />}
       {closing && <CloseModal expectedCents={null} onClose={() => setClosing(false)} onDone={(r) => { setClosing(false); setDone(r); load(); }} />}
     </div>
   );
@@ -244,22 +266,26 @@ function OpenModal({ onClose, onDone }: { onClose: () => void; onDone: () => voi
 function MoveModal({ type, onClose, onDone }: { type: CashMovementType; onClose: () => void; onDone: () => void }) {
   const [amount, setAmount] = useState('');
   const [concept, setConcept] = useState('');
+  const [auth, setAuth] = useState<SensitiveAuth | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
   const cents = parsePesos(amount);
-  const ok = cents !== null && !Number.isNaN(cents) && cents > 0 && concept.trim().length >= 3;
-  const title = type === 'entrada' ? 'Entrada de efectivo' : type === 'retiro' ? 'Retiro de efectivo' : 'Gasto';
+  const outflow = type !== 'entrada';
+  const ok = cents !== null && !Number.isNaN(cents) && cents > 0 && concept.trim().length >= (outflow ? 5 : 3) && (!outflow || auth !== null);
+  const title = type === 'entrada' ? 'Entrada de efectivo' : type === 'retiro' ? 'Retiro de efectivo' : 'Gasto / sacar dinero';
 
   const submit = async () => {
     if (submitting.current || !ok) return;
     submitting.current = true;
     setBusy(true);
     try {
-      await call('cash:movement', { type, amountCents: cents as number, concept: concept.trim() });
+      await call('cash:movement', { type, amountCents: cents as number, concept: concept.trim(), ...(outflow ? auth ?? {} : {}) });
       onDone();
     } catch (e) {
       setError(errorText(e));
+      setResetSignal((n) => n + 1);
       submitting.current = false;
       setBusy(false);
     }
@@ -268,8 +294,10 @@ function MoveModal({ type, onClose, onDone }: { type: CashMovementType; onClose:
     <Modal title={title} size="sm" onClose={onClose} dirty={amount !== '' || concept !== ''} busy={busy}
       footer={<><button className="btn" onClick={onClose} disabled={busy}>Cancelar</button><button className="btn btn-gold" onClick={() => void submit()} disabled={busy || !ok}>Registrar</button></>}>
       <div className="stack">
+        {outflow && <Banner kind="warn">Vas a sacar dinero del cajón. Queda registrado quién lo saca, para qué y quién lo autorizó.</Banner>}
         <Field label="Importe ($)"><input className="inp inp-lg" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
-        <Field label="Concepto" hint="Ejemplo: compra de bolsas, pago a proveedor, cambio para el cajón"><input className="inp" value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
+        <Field label={outflow ? '¿Para qué se saca el dinero? (obligatorio)' : 'Concepto'} hint="Ejemplo: comida del personal, pago a proveedor, compra de bolsas, cambio para el cajón"><input className="inp" value={concept} onChange={(e) => setConcept(e.target.value)} /></Field>
+        {outflow && <AuthPrompt purpose="retiro_caja" onChange={setAuth} resetSignal={resetSignal} disabled={busy} managerFree />}
         {error && <Banner kind="error">{error}</Banner>}
       </div>
     </Modal>

@@ -37,6 +37,8 @@ export interface NewTerminalForm {
   kind: TerminalKind;
   person: string;
   branchId: string;
+  /** v2.1: una o varias sucursales. Si viene, manda sobre `branchId` (la primera es la principal). */
+  branchIds?: string[];
   code: string;
 }
 
@@ -44,6 +46,7 @@ export interface NewTerminalPayload {
   code: string;
   name: string;
   branchId: string;
+  branchIds?: string[];
   kind: TerminalKind;
   assignedTo: string;
 }
@@ -58,14 +61,38 @@ export function buildNewTerminalPayload(
   const code = form.code.trim().toUpperCase();
   if (person.length < 2) errors.person = 'Escribe el nombre de la persona (mínimo 2 letras).';
   else if (person.length > 40) errors.person = 'El nombre es demasiado largo (máximo 40).';
-  if (!form.branchId) errors.branchId = 'Elige una sucursal.';
+  const selected = form.branchIds ?? (form.branchId ? [form.branchId] : []);
+  if (selected.length === 0) errors.branchId = 'Elige al menos una sucursal.';
   if (!TERMINAL_CODE_RE.test(code)) errors.code = 'El código debe tener de 1 a 3 letras mayúsculas o números.';
   else if (existingCodes.some((c) => c.trim().toUpperCase() === code)) errors.code = 'Ese código ya lo usa otra terminal.';
   if (Object.keys(errors).length > 0) return { payload: null, errors };
   return {
-    payload: { code, name: buildTerminalName(form.kind, person), branchId: form.branchId, kind: form.kind, assignedTo: person },
+    payload: {
+      code, name: buildTerminalName(form.kind, person), branchId: selected[0]!, kind: form.kind, assignedTo: person,
+      ...(form.branchIds ? { branchIds: [...new Set(selected)] } : {}),
+    },
     errors,
   };
+}
+
+export interface EditTerminalPayload {
+  name: string;
+  assignedTo: string;
+  branchIds: string[];
+}
+
+/** Valida el formulario "Editar terminal": persona y sucursales (al menos una). */
+export function buildEditTerminalPayload(
+  kind: TerminalKind,
+  form: { person: string; branchIds: string[] },
+): { payload: EditTerminalPayload | null; errors: { person?: string; branchIds?: string } } {
+  const errors: { person?: string; branchIds?: string } = {};
+  const person = form.person.replace(/\s+/g, ' ').trim();
+  if (person.length < 2) errors.person = 'Escribe el nombre de la persona (mínimo 2 letras).';
+  else if (person.length > 40) errors.person = 'El nombre es demasiado largo (máximo 40).';
+  if (form.branchIds.length === 0) errors.branchIds = 'Elige al menos una sucursal.';
+  if (Object.keys(errors).length > 0) return { payload: null, errors };
+  return { payload: { name: buildTerminalName(kind, person), assignedTo: person, branchIds: [...new Set(form.branchIds)] }, errors };
 }
 
 type Dict = Record<string, unknown>;
@@ -82,6 +109,7 @@ export function unwrapTerminal(raw: unknown): TerminalRecord | null {
     name: s(o.name),
     kind: o.kind === 'movil' ? 'movil' : 'escritorio',
     branchId: s(o.branchId),
+    branchIds: Array.isArray(o.branchIds) ? o.branchIds.filter((b): b is string => typeof b === 'string') : undefined,
     assignedTo: typeof o.assignedTo === 'string' ? o.assignedTo : null,
   };
 }

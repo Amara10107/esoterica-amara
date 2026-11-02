@@ -20,6 +20,10 @@ export const PURPOSE_ACTION: Record<TokenPurpose, string> = {
   devolucion: 'registrar una devolución',
   cancelacion: 'cancelar el ticket',
   limpias: 'entrar a Limpias',
+  escaner: 'usar el teléfono como escáner',
+  descuento: 'aplicar un descuento',
+  apertura_caja: 'abrir la caja (solo emergencias)',
+  retiro_caja: 'sacar dinero de la caja',
 };
 
 /** El gerente solo usa su contraseña; el vendedor puede usar contraseña de admin o token. */

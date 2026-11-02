@@ -36,6 +36,8 @@ export interface Terminal {
   code: string;
   name: string;
   branchId: string;
+  /** v2.1: sucursales donde la terminal puede trabajar (incluye la principal). */
+  branchIds?: string[];
   kind: 'escritorio' | 'movil';
   active?: boolean;
   /** La API v1 manda `revoked` (booleano); otras versiones `revokedAt`. Ver isTerminalRevoked. */
@@ -105,6 +107,9 @@ export interface CatalogProduct {
   specs: Record<string, string>;
   notes?: string | null;
   archived?: boolean;
+  /** v2.4.4: en la papelera (historial de borrados). */
+  deleted?: boolean;
+  deletedAt?: string | null;
   variants: CatalogVariant[];
 }
 

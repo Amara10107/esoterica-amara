@@ -46,7 +46,7 @@ function Shell() {
       <aside className="sidebar" aria-label="Menú principal">
         <div className="brand">
           {/* El logotipo se muestra completo y sin deformar (alto automático). */}
-          <img className="brand-logo" src="/logo-amara.png" alt="Esotérica Amara" width={160} height={124} />
+          <img className="brand-logo" src="/logo-amara.png" alt="Esotérica Amara" width={110} height={110} />
         </div>
         <nav>
           {groups.map((g) => (

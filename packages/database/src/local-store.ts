@@ -20,12 +20,22 @@ import {
   parseQrValue,
   refundAmountForLine,
   sanitizeExtraCategories,
+  sanitizeExtraCatalog,
+  sanitizeTheme,
+  extrasForType,
+  uniqueTypes,
   summarizeSales,
   tokenDenyMessage,
   verifyTokenCodeLocal,
+  advanceMatches, buildAdvanceCode, parseAdvanceCode, summarizeAdvance,
 } from '@amara/shared';
 import type {
   ActionAuthorization,
+  Advance,
+  AdvanceEntry,
+  AdvanceEntryKind,
+  AdvanceFull,
+  AdvanceMethod,
   AdjustmentItem,
   CachedSecurityToken,
   CashMovementType,
@@ -85,6 +95,8 @@ export interface RegisterSaleItem {
   unitPriceCents?: number;
   /** v2. SOLO para 'extra': qué se cobró. */
   extraNote?: string | null;
+  /** v2.1. SOLO para 'extra' en una venta normal: id del extra del catálogo (precio y nombre salen de ahí; no se pueden cambiar). */
+  extraId?: string;
 }
 
 export interface RegisterSaleInput {
@@ -297,10 +309,25 @@ export class LocalStore {
           );
         }
       }
+      if (p.advances) {
+        for (const a of p.advances) await this.insertAdvanceRecord(tx, a, a.entries);
+      }
       if (p.settings?.extraCategories) {
         await tx.run(
           'INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
           ['extraCategories', j(sanitizeExtraCategories(p.settings.extraCategories)), p.serverTime],
+        );
+      }
+      if (p.settings?.theme) {
+        await tx.run(
+          'INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+          ['theme', j(sanitizeTheme(p.settings.theme)), p.serverTime],
+        );
+      }
+      if (p.settings?.extraCatalog) {
+        await tx.run(
+          'INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+          ['extraCatalog', j(sanitizeExtraCatalog(p.settings.extraCatalog)), p.serverTime],
         );
       }
       await tx.run("INSERT INTO meta (key, value) VALUES ('last_pull_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [p.serverTime]);
@@ -330,6 +357,32 @@ export class LocalStore {
   async getExtraCategories(): Promise<string[]> {
     const list = await this.getSetting<unknown>('extraCategories', null);
     return Array.isArray(list) ? list.map(String) : [...DEFAULT_EXTRA_CATEGORIES];
+  }
+
+  /** v2.2. Apariencia que el administrador eligió (claro por omisión). */
+  async getTheme(): Promise<import('@amara/shared').ThemeSettings> {
+    return sanitizeTheme(await this.getSetting<unknown>('theme', null));
+  }
+
+  /** v2.1. Extras por tipo de producto (los descarga del servidor; vacío si el administrador aún no creó ninguno). */
+  async getExtraCatalog(): Promise<import('@amara/shared').ExtraOption[]> {
+    return sanitizeExtraCatalog(await this.getSetting<unknown>('extraCatalog', []));
+  }
+
+  /** v2.1. Guarda la copia local del catálogo de extras (tras guardarlo en el servidor). */
+  async setExtraCatalogLocal(items: unknown): Promise<import('@amara/shared').ExtraOption[]> {
+    const clean = sanitizeExtraCatalog(items);
+    await this.db.run(
+      'INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      ['extraCatalog', j(clean), this.nowIso()],
+    );
+    return clean;
+  }
+
+  /** v2.1. Tipos de producto del inventario local (para "Extras por tipo"). */
+  async listProductTypes(): Promise<string[]> {
+    const rows = await this.db.all<{ type: string }>("SELECT DISTINCT type FROM products WHERE status = 'activo'");
+    return uniqueTypes(rows.map((r) => r.type));
   }
 
   async getSettings(): Promise<{ extraCategories: string[] }> {
@@ -640,10 +693,16 @@ export class LocalStore {
 
   async registerSale(input: RegisterSaleInput): Promise<RegisterSaleResult> {
     if (!can(input.actor.role, 'ventas.crear')) throw new StoreError('sin_permiso', 'No tienes permiso para vender');
-    if ((input.discountCents ?? 0) > 0 || input.items.some((i) => (i.lineDiscountCents ?? 0) > 0)) {
-      if (!can(input.actor.role, 'ventas.descuento')) throw new StoreError('sin_permiso', 'Solo el gerente puede aplicar descuentos');
-    }
+    const hasDiscount = (input.discountCents ?? 0) > 0 || input.items.some((i) => (i.lineDiscountCents ?? 0) > 0);
     const type: SaleType = input.type ?? 'venta';
+    // v2.1: en una venta normal el vendedor puede dar descuento con contraseña de admin o token 'descuento'.
+    // En Limpias el descuento es solo del administrador.
+    if (hasDiscount && type === 'limpia' && !can(input.actor.role, 'ventas.descuento')) {
+      throw new StoreError('sin_permiso', 'Solo el administrador puede aplicar descuentos en Limpias');
+    }
+    if (hasDiscount && type === 'venta' && !can(input.actor.role, 'ventas.descuento') && input.actor.role !== 'vendedor') {
+      throw new StoreError('sin_permiso', 'No tienes permiso para aplicar descuentos');
+    }
     if (type !== 'venta' && type !== 'limpia') throw new StoreError('tipo_invalido', 'Tipo de venta desconocido');
     const device = await this.getDeviceInfo();
     if (!device) throw new StoreError('sin_configurar', 'La terminal no está configurada (sucursal/terminal)');
@@ -659,6 +718,11 @@ export class LocalStore {
         authz = await this.resolveSensitive(tx, {
           actor: input.actor, permission: 'caja.corte', purpose: 'limpias', branchId: input.branchId,
           authorization: input.authorization, trusted: input.authorizationTrusted, denied: 'No tienes permiso para registrar Limpias',
+        });
+      } else if (hasDiscount && !can(input.actor.role, 'ventas.descuento')) {
+        authz = await this.resolveSensitive(tx, {
+          actor: input.actor, permission: 'ventas.descuento', purpose: 'descuento', branchId: input.branchId,
+          authorization: input.authorization, trusted: input.authorizationTrusted, denied: 'No tienes permiso para aplicar descuentos',
         });
       }
 
@@ -683,9 +747,21 @@ export class LocalStore {
         if (kind === 'extra') {
           // Cargo adicional sobre el producto: 1 pieza, costo 0 y SIN movimiento de inventario.
           if (it.qty !== 1) throw new StoreError('cantidad_invalida', 'Un extra siempre es de 1 unidad');
-          if (!Number.isInteger(it.unitPriceCents) || (it.unitPriceCents as number) < 0) throw new StoreError('precio_invalido', 'Escribe el monto del extra (en centavos enteros, sin negativos)');
-          lines.push({ variantId: v.id, qty: 1, unitPriceCents: it.unitPriceCents as number, unitCostCents: 0, lineDiscountCents: it.lineDiscountCents, kind: 'extra' });
-          snaps.push({ productName: v.name, variantLabel: v.label, sku: v.sku, code: v.barcode ?? v.internal_code, kind: 'extra', extraNote: it.extraNote?.trim() || null });
+          let extraPrice = it.unitPriceCents as number;
+          let extraNote = it.extraNote?.trim() || null;
+          if (type !== 'limpia') {
+            // Venta normal: el extra SALE DEL CATÁLOGO (el vendedor no escribe ni cambia el precio).
+            const catalog = sanitizeExtraCatalog(parse<unknown>((await tx.get<{ value: string }>("SELECT value FROM app_settings WHERE key = 'extraCatalog'"))?.value, []));
+            const opt = it.extraId ? catalog.find((e) => e.id === it.extraId) : undefined;
+            if (!opt || !opt.active) throw new StoreError('extra_invalido', 'Ese extra ya no existe o está desactivado. Vuelve a elegirlo.');
+            const ptype = (await tx.get<{ type: string }>('SELECT p.type AS type FROM variants v JOIN products p ON p.id = v.product_id WHERE v.id = ?', [it.variantId]))?.type;
+            if (!extrasForType(catalog, ptype).some((e) => e.id === opt.id)) throw new StoreError('extra_no_permitido', `El extra "${opt.name}" no corresponde a ese tipo de producto.`);
+            extraPrice = opt.priceCents;
+            extraNote = opt.name;
+          }
+          if (!Number.isInteger(extraPrice) || extraPrice < 0) throw new StoreError('precio_invalido', 'Escribe el monto del extra (en centavos enteros, sin negativos)');
+          lines.push({ variantId: v.id, qty: 1, unitPriceCents: extraPrice, unitCostCents: 0, lineDiscountCents: it.lineDiscountCents, kind: 'extra' });
+          snaps.push({ productName: v.name, variantLabel: v.label, sku: v.sku, code: v.barcode ?? v.internal_code, kind: 'extra', extraNote });
         } else {
           lines.push({ variantId: v.id, qty: it.qty, unitPriceCents: v.price_cents, unitCostCents: v.cost_cents, lineDiscountCents: it.lineDiscountCents, kind: 'producto' });
           snaps.push({ productName: v.name, variantLabel: v.label, sku: v.sku, code: v.barcode ?? v.internal_code, kind: 'producto', extraNote: null });
@@ -1081,35 +1157,225 @@ export class LocalStore {
 
   // ───────────────────────── Caja ─────────────────────────
 
-  async openCash(p: { sessionId?: string; actor: Actor; branchId: string; terminalId: string; openingCents: number }) {
-    if (!can(p.actor.role, 'caja.abrir')) throw new StoreError('sin_permiso', 'Solo el gerente puede abrir la caja');
+  async openCash(p: {
+    sessionId?: string; actor: Actor; branchId: string; terminalId: string; openingCents: number;
+    /** v2.2 (teléfono): un vendedor solo abre la caja con contraseña de administrador o token 'apertura_caja' (emergencias). */
+    requireAuthorization?: boolean; authorization?: ActionAuthorization; authorizationTrusted?: boolean;
+  }) {
+    if (!can(p.actor.role, 'caja.abrir')) throw new StoreError('sin_permiso', 'No tienes permiso para abrir la caja');
     if (!Number.isInteger(p.openingCents) || p.openingCents < 0) throw new StoreError('importe_invalido', 'Fondo inicial inválido');
     return this.db.transaction(async (tx) => {
       const open = await this.currentSessionId(tx, p.terminalId);
       if (open) throw new StoreError('caja_abierta', 'Ya hay una caja abierta en esta terminal');
+      let authz: ResolvedAuthorization | null = null;
+      if (p.requireAuthorization) {
+        authz = await this.resolveSensitive(tx, {
+          actor: p.actor, permission: 'caja.corte', purpose: 'apertura_caja', branchId: p.branchId,
+          authorization: p.authorization, trusted: p.authorizationTrusted, denied: 'No tienes permiso para abrir la caja',
+        });
+      }
       const id = p.sessionId ?? newId();
       const at = this.nowIso();
       await tx.run('INSERT INTO cash_sessions (id, branch_id, terminal_id, opened_by, opened_at, opening_cents) VALUES (?,?,?,?,?,?)', [id, p.branchId, p.terminalId, p.actor.userId, at, p.openingCents]);
       await this.enqueue(tx, { opId: newId(), type: 'cash.open', branchId: p.branchId, terminalId: p.terminalId, userId: p.actor.userId, localTs: at, payload: { session: { id, branchId: p.branchId, terminalId: p.terminalId, openedBy: p.actor.userId, openedAt: at, openingCents: p.openingCents } } });
-      await this.audit(tx, { userId: p.actor.userId, action: 'caja.abrir', entity: 'cash_session', entityId: id, branchId: p.branchId, terminalId: p.terminalId, detail: { openingCents: p.openingCents } });
+      await this.audit(tx, { userId: p.actor.userId, action: 'caja.abrir', entity: 'cash_session', entityId: id, branchId: p.branchId, terminalId: p.terminalId, detail: { openingCents: p.openingCents, ...(authz ? { authorization: authz.authorization, authorizedBy: authz.authorizedBy, emergency: true } : {}) } });
       return id;
     });
   }
 
-  async addCashMovement(p: { id?: string; actor: Actor; terminalId: string; type: CashMovementType; amountCents: number; concept: string }) {
-    if (!can(p.actor.role, 'caja.movimientos')) throw new StoreError('sin_permiso', 'Solo el gerente puede registrar movimientos de caja');
+  /**
+   * Movimiento de efectivo.
+   *  - 'retiro' / 'gasto' (sacar dinero): el MOTIVO es obligatorio y se pide autorización. El gerente confirma con su sesión;
+   *    el vendedor necesita la contraseña de un administrador o un token 'retiro_caja'. Queda en la auditoría quién lo sacó,
+   *    para qué y quién lo autorizó.
+   *  - 'entrada' (meter dinero al cajón): solo el gerente (los anticipos de limpias tienen su propio flujo).
+   */
+  async addCashMovement(p: {
+    id?: string; actor: Actor; terminalId: string; type: CashMovementType; amountCents: number; concept: string;
+    authorization?: ActionAuthorization; authorizationTrusted?: boolean; advanceId?: string;
+  }) {
+    const outflow = p.type !== 'entrada';
+    if (!outflow && !p.advanceId && !can(p.actor.role, 'caja.movimientos')) throw new StoreError('sin_permiso', 'Solo el gerente puede registrar entradas de efectivo');
     if (!Number.isInteger(p.amountCents) || p.amountCents <= 0) throw new StoreError('importe_invalido', 'Importe inválido');
-    if (p.concept.trim().length < 3) throw new StoreError('motivo_requerido', 'Escribe el concepto');
+    const minLen = outflow ? 5 : 3;
+    if (p.concept.trim().length < minLen) {
+      throw new StoreError('motivo_requerido', outflow ? 'Escribe para qué se saca el dinero (por ejemplo: comida, pago a proveedor)' : 'Escribe el concepto');
+    }
     return this.db.transaction(async (tx) => {
       const s = await tx.get<any>("SELECT id, branch_id FROM cash_sessions WHERE terminal_id = ? AND status = 'abierta'", [p.terminalId]);
       if (!s) throw new StoreError('caja_cerrada', 'No hay caja abierta');
+      let authz: ResolvedAuthorization | null = null;
+      if (outflow) {
+        authz = await this.resolveSensitive(tx, {
+          actor: p.actor, permission: 'caja.movimientos', purpose: 'retiro_caja', branchId: s.branch_id,
+          authorization: p.authorization, trusted: p.authorizationTrusted, denied: 'No tienes permiso para sacar dinero de la caja',
+        });
+      }
       const id = p.id ?? newId();
       const at = this.nowIso();
-      await tx.run('INSERT INTO cash_movements (id, session_id, type, amount_cents, concept, user_id, created_at) VALUES (?,?,?,?,?,?,?)', [id, s.id, p.type, p.amountCents, p.concept.trim(), p.actor.userId, at]);
-      await this.enqueue(tx, { opId: newId(), type: 'cash.movement', branchId: s.branch_id, terminalId: p.terminalId, userId: p.actor.userId, localTs: at, payload: { movement: { id, sessionId: s.id, type: p.type, amountCents: p.amountCents, concept: p.concept.trim(), userId: p.actor.userId, createdAt: at } } });
-      await this.audit(tx, { userId: p.actor.userId, action: `caja.${p.type}`, entity: 'cash_session', entityId: s.id, branchId: s.branch_id, terminalId: p.terminalId, detail: { amountCents: p.amountCents, concept: p.concept } });
+      const concept = p.concept.trim();
+      await tx.run('INSERT INTO cash_movements (id, session_id, type, amount_cents, concept, user_id, created_at, advance_id) VALUES (?,?,?,?,?,?,?,?)', [id, s.id, p.type, p.amountCents, concept, p.actor.userId, at, p.advanceId ?? null]);
+      await this.enqueue(tx, {
+        opId: newId(), type: 'cash.movement', branchId: s.branch_id, terminalId: p.terminalId, userId: p.actor.userId, localTs: at,
+        payload: {
+          movement: { id, sessionId: s.id, type: p.type, amountCents: p.amountCents, concept, userId: p.actor.userId, createdAt: at, ...(p.advanceId ? { advanceId: p.advanceId } : {}) },
+          ...(authz && p.actor.role === 'vendedor' ? { authorization: authz.authorization } : {}),
+        },
+      });
+      await this.audit(tx, {
+        userId: p.actor.userId, action: `caja.${p.type}`, entity: 'cash_session', entityId: s.id, branchId: s.branch_id, terminalId: p.terminalId,
+        detail: { amountCents: p.amountCents, concept, ...(authz ? { authorizedBy: authz.authorizedBy, authorization: authz.authorization } : {}), ...(p.advanceId ? { advanceId: p.advanceId } : {}) },
+      });
       return id;
     });
+  }
+
+  // ---------------------------------------------------------------- Anticipos de limpias (v2.3)
+
+  private async insertAdvanceRecord(tx: RawDb, a: Advance, entries: AdvanceEntry[]): Promise<void> {
+    await tx.run(
+      `INSERT OR IGNORE INTO advances (id, code, branch_id, terminal_id, client_name, client_phone, concept, created_by, created_by_name, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [a.id, a.code, a.branchId, a.terminalId, a.clientName, a.clientPhone ?? null, a.concept ?? '', a.createdBy, a.createdByName, a.createdAt],
+    );
+    for (const e of entries) await this.insertAdvanceEntryRecord(tx, e);
+  }
+
+  private async insertAdvanceEntryRecord(tx: RawDb, e: AdvanceEntry): Promise<void> {
+    await tx.run(
+      `INSERT OR IGNORE INTO advance_entries (id, advance_id, kind, amount_cents, method, note, user_id, user_name, created_at, cash_session_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [e.id, e.advanceId, e.kind, e.amountCents, e.method ?? null, e.note ?? '', e.userId, e.userName, e.createdAt, e.cashSessionId ?? null],
+    );
+  }
+
+  private advanceFromRow(r: any, entries: any[]): AdvanceFull {
+    return {
+      id: r.id, code: r.code, branchId: r.branch_id, terminalId: r.terminal_id, clientName: r.client_name, clientPhone: r.client_phone ?? null,
+      concept: r.concept ?? '', createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at,
+      entries: entries.map((e) => ({
+        id: e.id, advanceId: e.advance_id, kind: e.kind, amountCents: e.amount_cents, method: e.method ?? null, note: e.note ?? '',
+        userId: e.user_id, userName: e.user_name, createdAt: e.created_at, cashSessionId: e.cash_session_id ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Un cliente deja dinero para una limpia. Cualquier vendedor o gerente puede RECIBIRLO; agregar más abonos o registrar
+   * usos lo hace solo el gerente (addAdvanceEntry). Si el abono es en efectivo y hay caja abierta, entra al cajón
+   * (movimiento de entrada) y queda ligado al corte; si no hay caja abierta, el anticipo se registra igual y se avisa.
+   */
+  async createAdvance(p: {
+    id?: string; actor: Actor; branchId: string; terminalId: string; terminalCode: string;
+    clientName: string; clientPhone?: string; concept?: string; amountCents: number; method?: AdvanceMethod; note?: string;
+  }): Promise<{ advance: AdvanceFull; cashRegistered: boolean }> {
+    if (!can(p.actor.role, 'ventas.crear')) throw new StoreError('sin_permiso', 'No tienes permiso para recibir anticipos');
+    const name = p.clientName.trim().replace(/\s+/g, ' ');
+    if (name.length < 2) throw new StoreError('nombre_requerido', 'Escribe el nombre de quien deja el dinero');
+    if (!Number.isInteger(p.amountCents) || p.amountCents <= 0) throw new StoreError('importe_invalido', 'Escribe cuánto deja (más de $0)');
+    const method: AdvanceMethod = p.method ?? 'efectivo';
+    const advanceId = p.id ?? newId();
+    return this.db.transaction(async (tx) => {
+      const dup = await tx.get<any>('SELECT * FROM advances WHERE id = ?', [advanceId]);
+      if (dup) {
+        const entries = await tx.all<any>('SELECT * FROM advance_entries WHERE advance_id = ? ORDER BY created_at, rowid', [advanceId]);
+        return { advance: this.advanceFromRow(dup, entries), cashRegistered: false };
+      }
+      const at = this.nowIso();
+      const counterKey = `advance:${p.terminalCode}`;
+      await tx.run('INSERT INTO counters (key, value) VALUES (?, 0) ON CONFLICT(key) DO NOTHING', [counterKey]);
+      await tx.run('UPDATE counters SET value = value + 1 WHERE key = ?', [counterKey]);
+      const seq = (await tx.get<{ value: number }>('SELECT value FROM counters WHERE key = ?', [counterKey]))!.value;
+      const code = buildAdvanceCode(p.terminalCode, seq);
+      const sessionId = method === 'efectivo' ? await this.currentSessionId(tx, p.terminalId) : null;
+      const advance: Advance = {
+        id: advanceId, code, branchId: p.branchId, terminalId: p.terminalId, clientName: name, clientPhone: p.clientPhone?.trim() || null,
+        concept: (p.concept ?? '').trim() || 'Limpia', createdBy: p.actor.userId, createdByName: p.actor.userName, createdAt: at,
+      };
+      const entry: AdvanceEntry = {
+        id: newId(), advanceId, kind: 'abono', amountCents: p.amountCents, method, note: (p.note ?? '').trim(),
+        userId: p.actor.userId, userName: p.actor.userName, createdAt: at, cashSessionId: sessionId,
+      };
+      await this.insertAdvanceRecord(tx, advance, [entry]);
+      await this.enqueue(tx, { opId: newId(), type: 'advance.create', branchId: p.branchId, terminalId: p.terminalId, userId: p.actor.userId, localTs: at, payload: { advance, entry } });
+      if (sessionId) {
+        const mid = newId();
+        const concept = `Anticipo de limpia ${code} - ${name}`;
+        await tx.run('INSERT INTO cash_movements (id, session_id, type, amount_cents, concept, user_id, created_at, advance_id) VALUES (?,?,?,?,?,?,?,?)', [mid, sessionId, 'entrada', p.amountCents, concept, p.actor.userId, at, advanceId]);
+        await this.enqueue(tx, {
+          opId: newId(), type: 'cash.movement', branchId: p.branchId, terminalId: p.terminalId, userId: p.actor.userId, localTs: at,
+          payload: { movement: { id: mid, sessionId, type: 'entrada', amountCents: p.amountCents, concept, userId: p.actor.userId, createdAt: at, advanceId } },
+        });
+      }
+      await this.audit(tx, { userId: p.actor.userId, action: 'anticipo.crear', entity: 'advance', entityId: advanceId, branchId: p.branchId, terminalId: p.terminalId, detail: { code, clientName: name, amountCents: p.amountCents, method, cashSessionId: sessionId } });
+      return { advance: { ...advance, entries: [entry] }, cashRegistered: !!sessionId };
+    });
+  }
+
+  /** Solo el gerente: agregar un abono, registrar en qué se utilizó el dinero, cerrar o reabrir el anticipo. */
+  async addAdvanceEntry(p: {
+    id?: string; actor: Actor; terminalId: string; advanceId: string; kind: AdvanceEntryKind;
+    amountCents?: number; method?: AdvanceMethod; note?: string;
+  }): Promise<{ advance: AdvanceFull; cashRegistered: boolean }> {
+    if (p.actor.role !== 'gerente') throw new StoreError('sin_permiso', 'Solo el administrador puede abrir un anticipo para agregar abonos o registrar usos');
+    const amount = p.kind === 'abono' || p.kind === 'uso' ? p.amountCents ?? 0 : 0;
+    if ((p.kind === 'abono' || p.kind === 'uso') && (!Number.isInteger(amount) || amount <= 0)) throw new StoreError('importe_invalido', 'Escribe un importe mayor a $0');
+    const note = (p.note ?? '').trim();
+    if (p.kind === 'uso' && note.length < 3) throw new StoreError('motivo_requerido', 'Escribe en qué se utilizó (por ejemplo: 5 velas)');
+    return this.db.transaction(async (tx) => {
+      const row = await tx.get<any>('SELECT * FROM advances WHERE id = ?', [p.advanceId]);
+      if (!row) throw new StoreError('anticipo_no_encontrado', 'No se encontró el anticipo en este equipo. Sincroniza e inténtalo de nuevo');
+      const before = this.advanceFromRow(row, await tx.all<any>('SELECT * FROM advance_entries WHERE advance_id = ? ORDER BY created_at, rowid', [p.advanceId]));
+      const sum = summarizeAdvance(before);
+      if (p.kind === 'uso' && amount > sum.balanceCents) throw new StoreError('excede_saldo', `Solo quedan ${sum.balanceCents / 100} pesos de saldo en este anticipo`);
+      if (p.kind === 'cierre' && sum.status === 'cerrado') throw new StoreError('ya_cerrado', 'El anticipo ya está cerrado');
+      if (p.kind === 'reapertura' && sum.status === 'abierto') throw new StoreError('ya_abierto', 'El anticipo ya está abierto');
+      if ((p.kind === 'abono' || p.kind === 'uso') && sum.status === 'cerrado') throw new StoreError('anticipo_cerrado', 'El anticipo está cerrado: ábrelo de nuevo para agregar movimientos');
+      const at = this.nowIso();
+      const method: AdvanceMethod | null = p.kind === 'abono' ? p.method ?? 'efectivo' : null;
+      const sessionId = p.kind === 'abono' && method === 'efectivo' ? await this.currentSessionId(tx, p.terminalId) : null;
+      const entry: AdvanceEntry = {
+        id: p.id ?? newId(), advanceId: p.advanceId, kind: p.kind, amountCents: amount, method, note,
+        userId: p.actor.userId, userName: p.actor.userName, createdAt: at, cashSessionId: sessionId,
+      };
+      await this.insertAdvanceEntryRecord(tx, entry);
+      await this.enqueue(tx, { opId: newId(), type: 'advance.entry', branchId: row.branch_id, terminalId: p.terminalId, userId: p.actor.userId, localTs: at, payload: { entry } });
+      if (sessionId) {
+        const mid = newId();
+        const concept = `Abono a anticipo ${row.code} - ${row.client_name}`;
+        await tx.run('INSERT INTO cash_movements (id, session_id, type, amount_cents, concept, user_id, created_at, advance_id) VALUES (?,?,?,?,?,?,?,?)', [mid, sessionId, 'entrada', amount, concept, p.actor.userId, at, p.advanceId]);
+        await this.enqueue(tx, {
+          opId: newId(), type: 'cash.movement', branchId: row.branch_id, terminalId: p.terminalId, userId: p.actor.userId, localTs: at,
+          payload: { movement: { id: mid, sessionId, type: 'entrada', amountCents: amount, concept, userId: p.actor.userId, createdAt: at, advanceId: p.advanceId } },
+        });
+      }
+      await this.audit(tx, { userId: p.actor.userId, action: `anticipo.${p.kind}`, entity: 'advance', entityId: p.advanceId, branchId: row.branch_id, terminalId: p.terminalId, detail: { code: row.code, amountCents: amount, method, note, cashSessionId: sessionId } });
+      return { advance: { ...before, entries: [...before.entries, entry] }, cashRegistered: !!sessionId };
+    });
+  }
+
+  async getAdvance(idOrCode: string): Promise<AdvanceFull | null> {
+    const code = parseAdvanceCode(idOrCode);
+    const row = await this.db.get<any>('SELECT * FROM advances WHERE id = ? OR UPPER(code) = ?', [idOrCode.trim(), code ?? '__none__']);
+    if (!row) return null;
+    return this.advanceFromRow(row, await this.db.all<any>('SELECT * FROM advance_entries WHERE advance_id = ? ORDER BY created_at, rowid', [row.id]));
+  }
+
+  /** Busca por nombre, teléfono, código (o lo leído del QR), concepto o día. Lo más reciente primero. */
+  async searchAdvances(opts: { branchId?: string; text?: string; status?: 'abierto' | 'cerrado' | 'todos'; limit?: number } = {}): Promise<AdvanceFull[]> {
+    const rows = opts.branchId
+      ? await this.db.all<any>('SELECT * FROM advances WHERE branch_id = ? ORDER BY created_at DESC LIMIT 1000', [opts.branchId])
+      : await this.db.all<any>('SELECT * FROM advances ORDER BY created_at DESC LIMIT 1000');
+    const out: AdvanceFull[] = [];
+    for (const r of rows) {
+      const base = this.advanceFromRow(r, []);
+      if (opts.text && !advanceMatches(base, opts.text)) continue;
+      const full = { ...base, entries: this.advanceFromRow(r, await this.db.all<any>('SELECT * FROM advance_entries WHERE advance_id = ? ORDER BY created_at, rowid', [r.id])).entries };
+      if (opts.status && opts.status !== 'todos' && summarizeAdvance(full).status !== opts.status) continue;
+      out.push(full);
+      if (out.length >= (opts.limit ?? 100)) break;
+    }
+    return out;
   }
 
   /** Cálculo del corte para una sesión (también se usa para la vista previa antes de confirmar). */

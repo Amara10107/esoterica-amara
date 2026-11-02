@@ -46,6 +46,8 @@ export const terminalSchema = z.object({
   /** v2: si se omite, el servidor arma un nombre con el tipo y la persona. */
   name: z.string().trim().min(2).max(60).optional(),
   branchId: uuid,
+  /** v2.1: sucursales adicionales donde la terminal puede trabajar (una o las dos). */
+  branchIds: z.array(uuid).min(1).max(10).optional(),
   kind: z.enum(['escritorio', 'movil']),
   /** v2: para quién es la terminal (nombre de la persona). */
   assignedTo: z.string().trim().min(1).max(80).optional(),
@@ -117,7 +119,7 @@ export const dateRangeSchema = z.object({
 
 export const syncOpSchema = z.object({
   opId: uuid,
-  type: z.enum(['sale.create', 'sale.adjust', 'stock.movement', 'cash.open', 'cash.movement', 'cash.close']),
+  type: z.enum(['sale.create', 'sale.adjust', 'stock.movement', 'cash.open', 'cash.movement', 'cash.close', 'advance.create', 'advance.entry']),
   branchId: uuid,
   terminalId: z.string().min(1),
   userId: uuid,
@@ -136,12 +138,12 @@ export const actionAuthorizationSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('token'), tokenId: z.string().min(1).max(100) }),
 ]);
 
-export const tokenPurposeSchema = z.enum(['cierre_caja', 'devolucion', 'cancelacion', 'limpias']);
+export const tokenPurposeSchema = z.enum(['cierre_caja', 'devolucion', 'cancelacion', 'limpias', 'escaner', 'descuento', 'apertura_caja', 'retiro_caja']);
 
 /** v2. POST /security/tokens */
 export const securityTokenCreateSchema = z.object({
   label: z.string().trim().min(2).max(80),
-  purposes: z.array(tokenPurposeSchema).min(1).max(4),
+  purposes: z.array(tokenPurposeSchema).min(1).max(8),
   /** 1 minuto a 7 días. El administrador la elige en minutos u horas (la interfaz convierte a minutos). */
   durationMinutes: z.number().int().min(1).max(7 * 24 * 60),
   branchId: uuid.nullish(),
@@ -171,10 +173,36 @@ export const extraCategoriesSchema = z.object({
   categories: z.array(z.string().trim().min(1).max(60)).max(60),
 });
 
+/** v2.1. PUT /settings/extras: catálogo de extras por tipo de producto. */
+export const extraCatalogSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(60),
+        type: z.string().trim().min(1).max(60),
+        name: z.string().trim().min(1).max(60),
+        priceCents: z.number().int().min(0).max(10_000_000),
+        active: z.boolean().optional(),
+      }),
+    )
+    .max(300),
+});
+
 export const cashCloseSchema = z.object({
   countedCents: cents,
   denominations: z.record(z.string(), z.number().int().min(0)).optional(),
   notes: z.string().max(300).optional(),
   /** v2. Obligatoria para el vendedor; el gerente que inicia sesión no la necesita. */
   authorization: actionAuthorizationSchema.optional(),
+});
+
+/** v2.2. PUT /settings/theme: apariencia (claro / oscuro / personalizado). */
+const hexSchema = z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido (usa #RRGGBB)');
+export const themeSchema = z.object({
+  mode: z.enum(['claro', 'oscuro', 'personalizado']),
+  custom: z.object({
+    bg: hexSchema, card: hexSchema, surface: hexSchema, text: hexSchema, muted: hexSchema,
+    line: hexSchema, accent: hexSchema, accentSoft: hexSchema, primary: hexSchema,
+  }),
+  presetId: z.string().trim().max(40).nullish(),
 });

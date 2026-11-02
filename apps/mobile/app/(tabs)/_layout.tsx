@@ -8,12 +8,12 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colors.gold,
-        tabBarInactiveTintColor: colors.muted,
+        tabBarActiveTintColor: colors.goldBright,
+        tabBarInactiveTintColor: colors.purpleMuted,
         tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
-        tabBarStyle: { backgroundColor: colors.bg, borderTopColor: colors.border },
+        tabBarStyle: { backgroundColor: colors.purple, borderTopColor: colors.purple },
         headerStyle: { backgroundColor: colors.bg },
-        headerTitleStyle: { fontWeight: '800', color: colors.text },
+        headerTitleStyle: { fontWeight: '800', color: colors.purple },
         headerShadowVisible: false,
         sceneStyle: { backgroundColor: colors.bg },
       }}

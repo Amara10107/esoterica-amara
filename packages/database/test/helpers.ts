@@ -66,6 +66,19 @@ export function pullPayload(): PullPayload {
       { id: vendedor.userId, username: 'vendedora', name: 'Vendedora', role: 'vendedor', branchIds: [B1], active: true },
     ],
     grants: [],
+    // v2.1: extras por tipo de producto (el tipo de P1 es 'Velas'; 'Veladora' en singular también debe coincidir)
+    settings: {
+      extraCatalog: [
+        { id: 'ex-aroma', type: 'Velas', name: 'Aceite aromático', priceCents: 2500, active: true },
+        { id: 'ex-cortesia', type: 'velas', name: 'cortesía', priceCents: 0, active: true },
+        { id: 'ex-1000', type: 'Vela', name: 'Grabado', priceCents: 1000, active: true },
+        { id: 'ex-500', type: 'Velas', name: 'moño', priceCents: 500, active: true },
+        { id: 'ex-700', type: 'Velas', name: 'hierbas', priceCents: 700, active: true },
+        { id: 'ex-3000', type: 'Velas', name: 'Bordado', priceCents: 3000, active: true },
+        { id: 'ex-off', type: 'Velas', name: 'Descontinuado', priceCents: 100, active: false },
+        { id: 'ex-pulsera', type: 'Pulseras', name: 'Dije', priceCents: 800, active: true },
+      ],
+    },
   };
 }
 

@@ -19,6 +19,7 @@ import { dateTime } from '../lib/format.ts';
 import { useApp } from '../state/AppState.tsx';
 import { useFeedback } from '../state/Feedback.tsx';
 import { useScanHandler } from '../state/Scanner.tsx';
+import { PasswordInput } from '../components/PasswordInput.tsx';
 
 interface Created {
   id: string;
@@ -224,7 +225,7 @@ function CreateModal({ branches, sellers, onClose, onCreated }: { branches: Bran
         {!form.ok && label.trim() !== '' && <Banner kind="warn">{form.error}</Banner>}
         {form.ok && <div className="preview">Dura <strong>{formatDuration(form.body.durationMinutes)}</strong> desde que lo crees.</div>}
         <Field label="Tu contraseña (confirmación)">
-          <input className="inp" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+          <PasswordInput className="inp" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
         </Field>
         {error && <Banner kind="error">{error}</Banner>}
       </div>

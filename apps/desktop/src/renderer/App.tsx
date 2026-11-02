@@ -5,10 +5,12 @@ import type { Permission } from '@amara/shared';
 import { Banner } from './components/Field.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
 import { ActivationScreen } from './screens/Activation.tsx';
+import { AdvancesScreen } from './screens/Advances.tsx';
 import { CashScreen } from './screens/Cash.tsx';
 import { InventoryScreen } from './screens/Inventory.tsx';
 import { LabelsScreen } from './screens/Labels.tsx';
 import { LimpiasScreen } from './screens/Limpias.tsx';
+import { PhoneScreen } from './screens/Phone.tsx';
 import { LoginScreen } from './screens/Login.tsx';
 import { PosScreen } from './screens/Pos.tsx';
 import { SettingsScreen } from './screens/Settings.tsx';
@@ -20,7 +22,7 @@ import { FeedbackProvider, useFeedback } from './state/Feedback.tsx';
 import { PosProvider, usePos } from './state/PosState.tsx';
 import { ScannerProvider } from './state/Scanner.tsx';
 
-type ScreenId = 'pos' | 'tickets' | 'cash' | 'limpias' | 'inventory' | 'labels' | 'tokens' | 'sync' | 'settings';
+type ScreenId = 'pos' | 'tickets' | 'cash' | 'advances' | 'limpias' | 'phone' | 'inventory' | 'labels' | 'tokens' | 'sync' | 'settings';
 
 interface NavItem {
   id: ScreenId;
@@ -58,8 +60,11 @@ function Shell() {
     { id: 'tickets', label: isManager ? 'Tickets' : 'Mis tickets', perm: 'ventas.ver_propias' },
     // v2: el vendedor también entra a Caja, pero SOLO para cerrarla a ciegas con autorización de administrador.
     { id: 'cash', label: 'Caja', perm: 'ventas.crear' },
+    // v2.3: anticipos de limpias (consultar, abonar, anotar usos): solo el gerente. El vendedor los recibe desde Caja.
+    { id: 'advances', label: 'Anticipos', perm: 'caja.corte' },
     // v2: Limpias. El gerente entra libre; el vendedor pide contraseña de administrador o token dentro de la pantalla.
     { id: 'limpias', label: 'Limpias', perm: 'ventas.crear' },
+    { id: 'phone', label: 'Teléfono', perm: 'ventas.crear' },
     { id: 'inventory', label: 'Inventario', perm: 'inventario.ver' },
     { id: 'labels', label: 'Etiquetas', perm: 'productos.ver' },
     { id: 'tokens', label: 'Tokens', perm: 'config.editar' },
@@ -117,7 +122,9 @@ function Shell() {
           {current === 'pos' && <PosScreen />}
           {current === 'tickets' && <TicketsScreen />}
           {current === 'cash' && <CashScreen />}
+          {current === 'advances' && <AdvancesScreen />}
           {current === 'limpias' && <LimpiasScreen />}
+          {current === 'phone' && <PhoneScreen />}
           {current === 'inventory' && <InventoryScreen goLabels={() => setScreen('labels')} />}
           {current === 'labels' && <LabelsScreen />}
           {current === 'tokens' && <TokensScreen />}

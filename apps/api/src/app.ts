@@ -3,7 +3,7 @@
  * para poder reutilizarla en pruebas.
  *
  * Seguridad de montaje:
- *  - TODO excepto /health y /auth/login exige token (`authenticate`).
+ *  - TODO excepto /health, /public/theme (solo colores) y /auth/login exige token (`authenticate`).
  *  - Los tokens de TERMINAL solo pasan en /sync/* y /security/verify: el resto monta `requireUser`.
  *  - Cada router aplica además su permiso por ruta (`requirePerm`), leído del rol en la base.
  */
@@ -14,10 +14,12 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { authenticate, requireUser } from './auth.ts';
 import { config } from './config.ts';
-import { errorHandler, HttpError } from './http.ts';
+import { ah, errorHandler, HttpError } from './http.ts';
+import { getTheme } from './settings.ts';
 import { adminRouter } from './routes/admin.ts';
 import { authRouter } from './routes/auth.ts';
 import { cashRouter } from './routes/cash.ts';
+import { advancesRouter } from './routes/advances.ts';
 import { catalogRouter } from './routes/catalog.ts';
 import { inventoryRouter } from './routes/inventory.ts';
 import { prefsRouter } from './routes/prefs.ts';
@@ -71,6 +73,9 @@ export function createApp(opts: AppOptions = {}) {
     res.json({ ok: true, time: new Date().toISOString(), version: config.version });
   });
 
+  // v2.2: la apariencia (solo colores) se lee sin sesión para que también la pantalla de inicio de sesión la use.
+  app.get('/public/theme', ah(async (_req, res) => { res.json({ theme: await getTheme() }); }));
+
   app.use('/auth', authRouter); // /auth/login es pública; el resto autentica dentro del router
   app.use('/sync', auth, syncRouter); // zona donde se acepta token de terminal
   // /security/verify también la usa una terminal; las rutas de tokens exigen sesión de usuario con permiso dentro del router.
@@ -80,6 +85,7 @@ export function createApp(opts: AppOptions = {}) {
     ['/inventory', inventoryRouter],
     ['/sales', salesRouter],
     ['/cash', cashRouter],
+    ['/advances', advancesRouter],
     ['/stats', statsRouter],
     ['/prefs', prefsRouter],
     ['/settings', settingsRouter],

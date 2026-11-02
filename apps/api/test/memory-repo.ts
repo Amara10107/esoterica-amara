@@ -1,5 +1,5 @@
 /** Repositorio en memoria para probar sync-apply sin MongoDB. Imita las garantías de unicidad por _id. */
-import type { CachedSecurityToken, CashMovement, Grant, Sale, SaleAdjustment } from '@amara/shared';
+import type { Advance, AdvanceEntry, CachedSecurityToken, CashMovement, Grant, Sale, SaleAdjustment } from '@amara/shared';
 import type {
   AuditRec, CashData, CashSessionRec, ConflictRec, StoredAdjustment, StoredMovement, StoredSale, SyncEventRec, SyncRepo, TerminalRec, UserRec, VariantRec,
 } from '../src/sync-apply.ts';
@@ -130,6 +130,21 @@ export class MemoryRepo implements SyncRepo {
   async insertCashMovement(m: CashMovement & { receivedAt: string; syncOpId: string }) {
     if (this.cashMovements.has(m.id)) return false;
     this.cashMovements.set(m.id, m);
+    return true;
+  }
+  advances = new Map<string, Advance>();
+  advanceEntries = new Map<string, AdvanceEntry>();
+  async getAdvance(id: string) {
+    return this.advances.get(id) ?? null;
+  }
+  async insertAdvance(a: Advance & { receivedAt: string; syncOpId: string }) {
+    if (this.advances.has(a.id)) return false;
+    this.advances.set(a.id, a);
+    return true;
+  }
+  async insertAdvanceEntry(e: AdvanceEntry & { receivedAt: string; syncOpId: string }) {
+    if (this.advanceEntries.has(e.id)) return false;
+    this.advanceEntries.set(e.id, e);
     return true;
   }
   async cashDataForSession(sessionId: string): Promise<CashData> {

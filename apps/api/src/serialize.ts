@@ -31,6 +31,9 @@ export function toProduct(p: Doc, opts: { photo?: boolean } = { photo: true }) {
     specs: p.specs ?? {},
     notes: p.notes ?? null,
     status: p.status,
+    archived: p.status === 'archivado',
+    deleted: p.deleted === true,
+    deletedAt: p.deletedAt ?? null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };

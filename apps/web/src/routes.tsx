@@ -27,6 +27,8 @@ export const ROUTES: RouteDef[] = [
   { path: '/ventas', label: 'Ventas y tickets', group: 'Ventas y caja', perm: 'tickets.archivo', component: lazy(() => import('./pages/Sales.tsx').then((m) => ({ default: m.Sales }))) },
   { path: '/limpias', label: 'Historial de Limpias', group: 'Ventas y caja', perm: 'tickets.archivo', component: lazy(() => import('./pages/Sales.tsx').then((m) => ({ default: m.LimpiasHistory }))) },
   { path: '/caja', label: 'Cortes de caja', group: 'Ventas y caja', perm: 'caja.corte', component: lazy(() => import('./pages/CashSessions.tsx').then((m) => ({ default: m.CashSessions }))) },
+  { path: '/corte-periodo', label: 'Corte por periodo', group: 'Ventas y caja', perm: 'caja.corte', component: lazy(() => import('./pages/PeriodCuts.tsx').then((m) => ({ default: m.PeriodCuts }))) },
+  { path: '/anticipos', label: 'Anticipos de limpias', group: 'Ventas y caja', perm: 'caja.corte', component: lazy(() => import('./pages/Advances.tsx').then((m) => ({ default: m.Advances }))) },
   { path: '/informes', label: 'Informes', group: 'Ventas y caja', perm: 'estadisticas.ver', component: lazy(() => import('./pages/Reports.tsx').then((m) => ({ default: m.Reports }))) },
   { path: '/sucursales', label: 'Sucursales y ubicaciones', group: 'Administración', perm: 'sucursales.gestionar', component: lazy(() => import('./pages/Branches.tsx').then((m) => ({ default: m.Branches }))) },
   { path: '/usuarios', label: 'Usuarios y permisos', group: 'Administración', perm: 'usuarios.gestionar', component: lazy(() => import('./pages/Users.tsx').then((m) => ({ default: m.Users }))) },

@@ -15,7 +15,7 @@ interface CartValue {
   totalCents: number;
   units: number;
   /** Devuelve el motivo en español si NO se pudo agregar (sin existencia o más de lo disponible); null si se agregó. */
-  add: (hit: Pick<CatalogHit, 'variantId' | 'productName' | 'label' | 'priceCents'> & Partial<Pick<CatalogHit, 'category' | 'qty'>>, qty?: number) => string | null;
+  add: (hit: Pick<CatalogHit, 'variantId' | 'productName' | 'label' | 'priceCents'> & Partial<Pick<CatalogHit, 'category' | 'type' | 'qty'>>, qty?: number) => string | null;
   /** Devuelve el motivo si el aumento se rechazó (bajar o quitar siempre se permite). */
   changeQty: (variantId: string, qty: number) => string | null;
   remove: (variantId: string) => void;
@@ -100,7 +100,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const add = useCallback<CartValue['add']>(
     (hit, qty = 1) => {
-      const r = addToCartChecked(cartRef.current, { variantId: hit.variantId, productName: hit.productName, label: hit.label, priceCents: hit.priceCents, category: hit.category, qty: hit.qty }, qty);
+      const r = addToCartChecked(cartRef.current, { variantId: hit.variantId, productName: hit.productName, label: hit.label, priceCents: hit.priceCents, category: hit.category, type: hit.type, qty: hit.qty }, qty);
       if (r.error) return r.error;
       setCart(r.cart);
       return null;

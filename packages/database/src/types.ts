@@ -76,7 +76,9 @@ export interface PullPayload {
   /** v2. Tokens de seguridad vigentes o recientes (solo hashes). Si viene, REEMPLAZA la caché local. */
   securityTokens?: CachedSecurityToken[];
   /** v2. Configuración del servidor. */
-  settings?: { extraCategories?: string[] };
+  /** v2.3. Anticipos de limpias de la sucursal (con todos sus movimientos). Se insertan sin pisar nada. */
+  advances?: import('@amara/shared').AdvanceFull[];
+  settings?: { extraCategories?: string[]; extraCatalog?: import('@amara/shared').ExtraOption[]; theme?: import('@amara/shared').ThemeSettings };
 }
 
 /** Resultado de buscar un código/producto con su existencia local en la sucursal. */

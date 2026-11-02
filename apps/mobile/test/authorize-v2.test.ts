@@ -247,7 +247,7 @@ test('el carrito valida existencias antes de llegar al almacén (0 no se agrega;
 test('venta con extra: el carrito suma el cargo, el borrador lo conserva y el almacén lo registra sin mover inventario', async () => {
   const { store } = await shop();
   let c = addToCartChecked(newCart(newId()), { variantId: V_CH, productName: 'Vela', label: 'Chica', priceCents: 9000, qty: 10, category: 'Veladoras' }, 1).cart;
-  c = addExtra(c, { id: 'x1', variantId: V_CH, productName: 'Vela', label: 'Chica', amountCents: 2500, note: 'Aroma a rosas' });
+  c = addExtra(c, { id: 'x1', variantId: V_CH, productName: 'Vela', label: 'Chica', amountCents: 2500, note: 'Aroma a rosas', extraId: 'ex-aroma' });
   assert.equal(cartTotalCents(c), 11500);
   assert.equal(cartIsEmpty(c), false);
   assert.deepEqual(parseDraft(JSON.stringify(toDraft(c)))!.extras!.map((e) => e.amountCents), [2500]);
@@ -306,4 +306,31 @@ test('ticket de permiso: código, propósitos, vigencia y quién autoriza; color
   assert.ok(!closureHtml({ business: 'x', branchName: 'x', terminalCode: 'x', openedAtIso: '2026-10-22T16:00:00.000Z', openedByName: 'x', openingCents: 0, closedAtIso: '2026-10-22T16:00:00.000Z', closedByName: 'x', breakdown: { cashSalesCents: 0, cashInCents: 0, withdrawalsCents: 0, expensesCents: 0, cashRefundsCents: 0, byMethod: { efectivo: 0, tarjeta: 0, transferencia: 0, otro: 0 }, operations: 0 }, expectedCents: 0, countedCents: 0, differenceCents: 0, authorizedByName: null, authorization: null, provisional: false }).includes('#5B3A8C'), 'el cierre no usa el violeta');
   assert.equal(groupCode('abcd2345'), 'abcd 2345');
   assert.equal(groupCode('ABCDEFGHJK'), 'ABCD EFGH JK');
+});
+
+// ───────────── Descuentos (v2.1) ─────────────
+test('descuento: el vendedor solo con token «descuento» o contraseña de admin; en Limpias solo el administrador', async () => {
+  const { store } = await shop();
+  const base = { saleId: '', actor: vendedor, branchId: B1, terminalId: T1, items: [{ variantId: V_CH, qty: 1 }], discountCents: 1000, payments: cash(8000) };
+  await assert.rejects(store.registerSale({ ...base, saleId: newId() }), (e) => code(e, 'autorizacion_requerida'));
+
+  const p = pullPayload();
+  p.securityTokens = [cachedToken(CODE, { purposes: ['limpias'] })];
+  await store.applyPull(p);
+  const wrong = await authorizeAction(store, req({ mode: 'token', secret: CODE, purpose: 'descuento' }), null);
+  assert.ok(!wrong.ok, 'un token de otro propósito no sirve');
+
+  p.securityTokens = [cachedToken(CODE, { purposes: ['descuento'] })];
+  await store.applyPull(p);
+  const auth = await authorizeAction(store, req({ mode: 'token', secret: CODE, purpose: 'descuento' }), null);
+  assert.ok(auth.ok);
+  const r = await store.registerSale({ ...base, saleId: newId(), authorization: auth.ok ? auth.authorization : undefined });
+  assert.equal(r.sale.discountCents, 1000);
+  assert.equal(r.sale.totalCents, 8000);
+
+  // Limpias con descuento: el vendedor no puede aunque tenga autorización de Limpias.
+  await assert.rejects(
+    store.registerSale({ ...base, saleId: newId(), type: 'limpia', payments: cash(8000), authorization: auth.ok ? auth.authorization : undefined }),
+    (e) => code(e, 'sin_permiso'),
+  );
 });
