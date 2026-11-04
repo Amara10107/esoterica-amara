@@ -131,15 +131,21 @@ export function buildCredentials(terminal: TerminalRecord, tokenRaw: unknown, fa
   };
 }
 
-/** Texto para "Copiar todo". El token va al final y solo si existe. */
-export function credentialsText(c: TerminalCredentials, branchName: string): string {
+/**
+ * Texto para "Copiar todo". El token va al final y solo si existe.
+ * Incluye también el Id y el código de la sucursal (branchId/branchCode): son justo lo que pide el
+ * formulario "Avanzado: activar con un token" del escritorio, que no los puede adivinar por sí solo.
+ */
+export function credentialsText(c: TerminalCredentials, branchName: string, branchCode = ''): string {
   const lines = [
     `ID: ${c.id}`,
     `Código: ${c.code}`,
     `Nombre: ${c.name}`,
     `Tipo: ${c.kind === 'movil' ? 'Móvil' : 'PC (escritorio)'}`,
     `Sucursal: ${branchName || c.branchId}`,
+    `Id de la sucursal: ${c.branchId}`,
   ];
+  if (branchCode) lines.push(`Código de sucursal: ${branchCode}`);
   if (c.assignedTo) lines.push(`Para: ${c.assignedTo}`);
   if (c.token) lines.push(`Token de activación: ${c.token}`);
   return lines.join('\n');

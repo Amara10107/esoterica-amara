@@ -21,7 +21,7 @@ import { CopyButton } from '../components/CopyButton.tsx';
 import { useBranches, useToast } from '../context.tsx';
 
 export function TerminalsCard() {
-  const { branches, branchName } = useBranches();
+  const { branches, branchName, branchCode } = useBranches();
   const { notify } = useToast();
   const terminals = useAsync((s) => api.get<unknown>('/admin/terminals', undefined, s).then((d) => asList<Terminal>(d)), []);
   const [creating, setCreating] = useState(false);
@@ -180,6 +180,7 @@ export function TerminalsCard() {
           creds={creds}
           viewOnly={viewing}
           branchLabel={(credsBranchIds ?? [creds.branchId]).map((b) => branchName(b)).join(' y ')}
+          branchCodeValue={branchCode(creds.branchId)}
           onClose={() => setCreds(null)}
         />
       )}
@@ -330,15 +331,20 @@ function NewTerminalModal(props: {
 
 /* ------------------------------------------------------ Modal 2: datos generados */
 
-function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: string; viewOnly?: boolean; onClose: () => void }) {
+function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: string; branchCodeValue?: string; viewOnly?: boolean; onClose: () => void }) {
   const c = props.creds;
+  const branchCodeValue = props.branchCodeValue ?? '';
   const rows: { label: string; value: string }[] = [
     { label: 'ID', value: c.id },
     { label: 'Código', value: c.code },
     { label: 'Nombre', value: c.name },
     { label: 'Tipo', value: c.kind === 'movil' ? 'Móvil' : 'PC (escritorio)' },
     { label: 'Sucursal', value: props.branchLabel || c.branchId },
+    // Estas dos son justo lo que pide el formulario "Avanzado" del escritorio (Id/Código de sucursal):
+    // la pantalla normal (usuario y contraseña) no las necesita, pero si hay que activar a mano, aquí están.
+    { label: 'Id de la sucursal', value: c.branchId },
   ];
+  if (branchCodeValue) rows.push({ label: 'Código de sucursal', value: branchCodeValue });
   if (c.assignedTo) rows.push({ label: 'Para', value: c.assignedTo });
 
   return (
@@ -348,7 +354,7 @@ function CredentialsModal(props: { creds: TerminalCredentials; branchLabel: stri
       onClose={props.onClose}
       footer={
         <>
-          <CopyButton text={credentialsText(c, props.branchLabel)} label="Copiar todo" />
+          <CopyButton text={credentialsText(c, props.branchLabel, branchCodeValue)} label="Copiar todo" />
           <button type="button" className="btn btn-primary" onClick={props.onClose}>Listo</button>
         </>
       }

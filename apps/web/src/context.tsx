@@ -259,6 +259,7 @@ interface BranchesCtx {
   loading: boolean;
   error: string | null;
   branchName: (id: string | null | undefined) => string;
+  branchCode: (id: string | null | undefined) => string;
   reload: () => void;
 }
 const BranchesContext = createContext<BranchesCtx>({
@@ -266,6 +267,7 @@ const BranchesContext = createContext<BranchesCtx>({
   loading: false,
   error: null,
   branchName: (id) => id ?? '',
+  branchCode: (id) => id ?? '',
   reload: () => undefined,
 });
 export const useBranches = () => useContext(BranchesContext);
@@ -306,6 +308,7 @@ function BranchesProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       branchName: (id) => (id ? branches.find((b) => b.id === id)?.name ?? `Sucursal ${id.slice(0, 6)}` : ''),
+      branchCode: (id) => (id ? branches.find((b) => b.id === id)?.code ?? '' : ''),
       reload: () => setTick((t) => t + 1),
     }),
     [branches, loading, error],

@@ -73,6 +73,18 @@
 .pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 1px solid var(--line); background: var(--bg); color: var(--ink-2, var(--ink)); border-radius: 6px; padding: 4px 10px; font-size: 0.8em; cursor: pointer; }
 .pw-toggle:hover { border-color: var(--gold); }
 
+/* v2.4.8: refuerzo para teléfonos. El menú ya se oculta solo (ver .sidebar en styles.css), pero esto
+   evita que la página se desborde de lado a lado en pantallas angostas de verdad (no solo que se vea
+   bien "si" el menú se oculta). Si el teléfono muestra el menú y el contenido lado a lado pidiendo
+   deslizar a los lados, casi siempre es porque Chrome tiene activado "Solicitar sitio de escritorio"
+   (menú de 3 puntos): desactívalo y esta pantalla usa el menú hamburguesa como en la PC. */
+html, body { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 480px) {
+  .kpi-row { grid-template-columns: 1fr; }
+  .topbar-user { gap: 6px; }
+  .user-name { font-size: 13px; }
+}
+
 /* v2.2: apariencia oscura / personalizada. Solo se activa cuando el administrador la elige
    (html[data-amara-theme]); en modo claro no cambia nada de tu diseño. */
 html[data-amara-theme] { color-scheme: dark; }

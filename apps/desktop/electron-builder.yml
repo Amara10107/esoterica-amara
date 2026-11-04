@@ -6,6 +6,10 @@
 appId: mx.esotericaamara.pos
 productName: Esoterica Amara
 copyright: Esotérica Amara
+# electron-builder a veces no detecta solo la versión de electron instalada en monorepos con
+# varias carpetas de trabajo (devuelve "Cannot compute electron version..."); se la damos fija.
+# Si al actualizar "electron" en package.json cambia la versión mayor, hay que actualizar esto también.
+electronVersion: 33.4.11
 directories:
   output: release
   buildResources: build

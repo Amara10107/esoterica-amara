@@ -97,3 +97,17 @@ Quedan solo en la web: crear/editar usuarios y sucursales, alta de permisos temp
 ## v2.4.6 — Corrige la compilación de la API en Render
 - El comando `build` de `apps/api` pasaba `--noExternal` como argumento de línea de comandos, pero `tsup` 8.x no acepta esa opción así (solo en un archivo de configuración). Esto hacía fallar el despliegue en Render con `CACError: Unknown option --noExternal`.
 - Se agregó `apps/api/tsup.config.ts` con esa opción y se simplificó el script `build` a solo `tsup`. El resultado final (qué se empaqueta) es el mismo.
+
+## v2.4.7 — Corrige la generación del instalador de escritorio
+- `electron-builder` fallaba con "Cannot compute electron version from installed node modules" al correr `npm run build:desktop`, aunque `electron` sí estaba instalado (problema conocido de esa herramienta con monorepos de varias carpetas de trabajo).
+- Se fijó la versión en `apps/desktop/electron-builder.yml` (`electronVersion: 33.4.11`) para que no dependa de la detección automática.
+
+## v2.4.8 — Corrige la activación de terminal (escritorio) contra el servidor en línea
+- Al activar una terminal desde la pantalla normal (usuario y contraseña del gerente, sin usar el modo «Avanzado»), el servidor siempre rechazaba la entrega del token con «El servidor no entregó el token de la terminal: Confirma tu contraseña para continuar» — el escritorio nunca enviaba la confirmación de contraseña reciente que esa acción exige en el servidor.
+- Se corrigió: el escritorio ahora confirma la contraseña automáticamente (con la misma que el gerente ya escribió) antes de pedir el token de la terminal. Ya no hace falta copiar el token ni el ID de la sucursal a mano desde la web — basta con usuario, contraseña y elegir sucursal/terminal de la lista.
+- Nota técnica: el modo «Avanzado: activar con un token» no valida el ID de sucursal que se escribe (solo queda guardado localmente); si no coincide con el real, las ventas e inventario de esa terminal quedan mal etiquetados hasta corregirlo. Por eso ahora conviene usar siempre el modo normal.
+
+## v2.4.9 — Web: datos completos de la terminal + ajustes para teléfono
+- **Terminales (web):** el modal "Datos de la terminal" (y "Copiar todo") ahora también incluye **Id de la sucursal** y **Código de sucursal** — exactamente lo que pide el formulario "Avanzado" del escritorio, por si alguna vez hace falta activar a mano. La pantalla normal del escritorio (usuario y contraseña) no necesita nada de esto desde la v2.4.8.
+- **Teléfono:** el panel ya se adapta a pantallas angostas (menú hamburguesa, tarjetas en una sola columna); se agregó un refuerzo para que la página no se desborde de lado a lado en pantallas muy angostas.
+  - Importante: si en el teléfono el menú y el contenido se ven lado a lado pidiendo deslizar a los lados (como si fuera la versión de PC), revisa en Chrome el menú de los 3 puntos → si "Solicitar sitio de escritorio" está marcado, desmárcalo. Eso fuerza a cualquier página (no solo esta) a verse como en computadora.

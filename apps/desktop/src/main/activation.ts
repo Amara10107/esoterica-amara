@@ -33,7 +33,7 @@ const idOf = (o: Record<string, unknown>): string => String(o.id ?? o._id ?? '')
 const s = (v: unknown): string => (typeof v === 'string' ? v : v === undefined || v === null ? '' : String(v));
 
 export class ActivationService {
-  private pending: { apiUrl: string; token: string; options: ActivationOptions; at: number } | null = null;
+  private pending: { apiUrl: string; token: string; reauth: string; options: ActivationOptions; at: number } | null = null;
 
   constructor(private d: { store: LocalStore; settings: SettingsStore; secrets: SecretStore; afterActivation: () => Promise<void> }) {}
 
@@ -60,6 +60,14 @@ export class ActivationService {
       throw new AppError('api', `No se pudo iniciar sesión en el servidor: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (login.user.role !== 'gerente') throw new AppError('rol', 'Solo un gerente puede activar una terminal.');
+    // Emitir el token de la terminal exige contraseña reciente (x-reauth) en el servidor: la pedimos
+    // aquí mismo (con la contraseña que el gerente ya escribió) para no tener que volver a pedirla después.
+    let reauth: { token: string };
+    try {
+      reauth = await apiRequest(apiUrl, '/auth/reauth', { method: 'POST', token: login.token, body: { password } });
+    } catch (e) {
+      throw new AppError('api', `No se pudo confirmar la contraseña: ${e instanceof Error ? e.message : String(e)}`);
+    }
     const [rawB, rawT] = await Promise.all([
       apiRequest<unknown>(apiUrl, '/admin/branches', { token: login.token }),
       apiRequest<unknown>(apiUrl, '/admin/terminals', { token: login.token }),
@@ -75,7 +83,7 @@ export class ActivationService {
       throw new AppError('sin_datos', 'El servidor no tiene sucursales o terminales de escritorio dadas de alta. Créalas primero en el panel web.');
     }
     const options = { branches, terminals };
-    this.pending = { apiUrl, token: login.token, options, at: Date.now() };
+    this.pending = { apiUrl, token: login.token, reauth: reauth.token, options, at: Date.now() };
     return options;
   }
 
@@ -93,7 +101,12 @@ export class ActivationService {
 
     let tokenRes: { token?: string; terminalToken?: string };
     try {
-      tokenRes = await apiRequest(p.apiUrl, `/admin/terminals/${encodeURIComponent(terminal.id)}/token`, { method: 'POST', token: p.token, body: {} });
+      tokenRes = await apiRequest(p.apiUrl, `/admin/terminals/${encodeURIComponent(terminal.id)}/token`, {
+        method: 'POST',
+        token: p.token,
+        headers: { 'x-reauth': p.reauth },
+        body: {},
+      });
     } catch (e) {
       throw new AppError('api', `El servidor no entregó el token de la terminal: ${e instanceof Error ? e.message : String(e)}`);
     }
