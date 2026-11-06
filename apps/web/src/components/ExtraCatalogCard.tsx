@@ -104,6 +104,8 @@ export function ExtraCatalogCard() {
                 />
                 <label className="check"><input type="checkbox" checked={i.active} onChange={(e) => patch(i.id, { active: e.target.checked })} /> Activo</label>
                 <button type="button" className="btn btn-sm btn-ghost" onClick={() => setItems((cur) => cur.filter((x) => x.id !== i.id))}>Quitar</button>
+                {/* v2.4.18: junto a cada extra, para no tener que buscar el botón de guardar hasta arriba (ni se esconde). Guarda TODO (todos los tipos), igual que el de arriba. */}
+                <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={!dirty || busy}>{busy ? 'Guardando...' : 'Guardar'}</button>
               </div>
             ))}
             <div className="extra-row">
