@@ -81,12 +81,10 @@ export class SyncService {
         this.d.emit(this.state);
         return this.state;
       }
-      if (!net.isOnline()) {
-        this.state = { ...this.state, online: false, lastError: 'Sin conexión a internet' };
-        await this.refreshCounts();
-        this.d.emit(this.state);
-        return this.state;
-      }
+      // OJO: antes se cortaba aquí si net.isOnline() decía "sin internet", pero esa función de Electron
+      // a veces se equivoca en Windows (ve "sin red" aunque el navegador sí tenga internet) y entonces
+      // nunca se llegaba ni a intentar el pedido real al servidor. Mejor dejar que el propio intento
+      // (con su límite de 20s) decida: runSyncCycle ya clasifica bien "sin conexión" vs otros errores.
       this.state = { ...this.state, running: true };
       this.d.emit(this.state);
 

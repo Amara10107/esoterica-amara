@@ -279,6 +279,13 @@ export class LocalStore {
         );
       }
       for (const u of p.users) {
+        // v2.4.16: si quedó guardado localmente OTRO usuario (otro id) con este mismo username
+        // -de cuando ese id ya no existe en el servidor, por ejemplo tras recrear una cuenta- el
+        // INSERT de abajo fallaba con "UNIQUE constraint failed: users_local.username" y tiraba
+        // TODA la sincronización (va en la misma transacción que catálogo y existencias). El
+        // servidor es la fuente de verdad del username, así que cualquier otro id local con el
+        // mismo username ya está obsoleto: se quita primero.
+        await tx.run('DELETE FROM users_local WHERE username = ? AND id <> ?', [u.username, u.id]);
         // v2: `verifier` (solo gerentes) permite validar su contraseña sin internet; si no viene, se conserva el anterior.
         await tx.run(
           `INSERT INTO users_local (id, username, name, role, branch_ids_json, active, verifier, updated_at) VALUES (?,?,?,?,?,?,?,?)

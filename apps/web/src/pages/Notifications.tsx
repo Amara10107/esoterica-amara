@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatMxDateTime } from '@amara/shared';
 import { filterByBranch, severityOf, LOW_STOCK_REFRESH_MS } from '../lib/notifications.ts';
-import { formatQty } from '../lib/format.ts';
+import { formatMXN, formatQty } from '../lib/format.ts';
 import { Alert, Badge, Card, Empty, ErrorBox, KpiCard, PageHeader, Spinner, TableWrap } from '../components/ui.tsx';
 import { BranchSelect } from '../components/common.tsx';
 import { useBranches } from '../context.tsx';
@@ -13,17 +14,18 @@ function clock(ms: number): string {
 }
 
 export function NotificationsPage() {
-  const { items, counts, loading, error, updatedAt, refresh } = useNotifications();
+  const { items, counts, openCash, loading, error, updatedAt, refresh } = useNotifications();
   const { branchName } = useBranches();
   const [branchId, setBranchId] = useState('');
   const rows = filterByBranch(items, branchId);
   const out = rows.filter((r) => severityOf(r) === 'agotado').length;
+  const openCashRows = branchId ? openCash.filter((c) => c.branchId === branchId) : openCash;
 
   return (
     <>
       <PageHeader
         title="Notificaciones"
-        subtitle={`Productos en o bajo su existencia mínima. Se actualiza solo cada ${LOW_STOCK_REFRESH_MS / 1000} segundos y al volver a esta ventana.`}
+        subtitle={`Existencias bajas y cajas sin cerrar. Se actualiza solo cada ${LOW_STOCK_REFRESH_MS / 1000} segundos y al volver a esta ventana.`}
         actions={
           <button type="button" className="btn" onClick={refresh} disabled={loading}>
             {loading ? 'Actualizando...' : 'Actualizar'}
@@ -45,7 +47,41 @@ export function NotificationsPage() {
             <KpiCard kind="conteo" title="Productos con aviso" value={formatQty(rows.length)} sub={`${formatQty(counts.total)} en total entre todas las sucursales`} />
             <KpiCard kind="conteo" title="Agotados" value={formatQty(out)} sub="Sin existencia disponible" />
             <KpiCard kind="conteo" title="En o bajo el mínimo" value={formatQty(rows.length - out)} sub="Conviene resurtir pronto" />
+            <KpiCard kind="conteo" title="Cajas sin cerrar" value={formatQty(openCashRows.length)} sub="Abiertas desde un día anterior" />
           </div>
+          <Card title="Cajas sin cerrar" actions={<Link to="/caja">Ver cortes de caja</Link>}>
+            {openCashRows.length === 0 ? (
+              <Empty>No hay ninguna caja que haya quedado abierta de un día anterior.</Empty>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Sucursal</th>
+                      <th>Terminal</th>
+                      <th>Se abrió</th>
+                      <th className="num">Fondo de apertura</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {openCashRows.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.branchName || branchName(c.branchId) || '-'}</td>
+                        <td>{c.terminalLabel}</td>
+                        <td>{formatMxDateTime(c.openedAt)}</td>
+                        <td className="num">{formatMXN(c.openingCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+            {openCashRows.length > 0 && (
+              <Alert tone="warn" title="Quedó abierta desde un día anterior">
+                A alguien se le olvidó hacer el corte. El cierre se hace desde la computadora o teléfono donde se abrió (pestaña Caja); desde aquí solo se puede ver, no cerrar a distancia.
+              </Alert>
+            )}
+          </Card>
           <Card title="Productos que requieren atención" actions={<Link to="/inventario?estado=bajo">Ver en inventario</Link>}>
             {rows.length === 0 ? (
               <Empty>Todo en orden: ningún producto está en o bajo su mínimo.</Empty>

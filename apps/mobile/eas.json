@@ -13,7 +13,7 @@
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://CAMBIAR-por-la-url-de-la-api.ejemplo.mx"
+        "EXPO_PUBLIC_API_URL": "https://amara-api-4b5v.onrender.com"
       }
     },
     "production": {

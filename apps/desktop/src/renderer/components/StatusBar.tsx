@@ -16,7 +16,9 @@ export function syncSummary(s: SyncState | null, now: number): { text: string; l
   if (!s.activated) return { text: 'Sin servidor configurado (trabajando solo en esta PC)', level: 'info' };
   if (s.authError) return { text: 'La terminal no está autorizada en el servidor', level: 'error' };
   if (s.running) return { text: 'Sincronizando...', level: 'info' };
-  if (!s.online) return { text: `Sin conexión${s.pending ? ` - ${s.pending} pendiente(s) por enviar` : ''}`, level: 'warn' };
+  // v2.4.14: antes esto ocultaba el motivo real (s.lastError) detrás de "Sin conexión" genérico,
+  // lo que hacía imposible saber si de verdad no había red o era otra cosa (timeout, DNS, etc.).
+  if (!s.online) return { text: `Sin conexión${s.lastError ? `: ${s.lastError}` : ''}${s.pending ? ` - ${s.pending} pendiente(s) por enviar` : ''}`, level: 'warn' };
   if (s.lastError) return { text: `Error al sincronizar: ${s.lastError}`, level: 'warn' };
   if (s.pending > 0) return { text: `${s.pending} pendiente(s) por enviar`, level: 'warn' };
   return { text: `Sincronizado ${ago(s.lastOkAt, now)}`, level: 'ok' };

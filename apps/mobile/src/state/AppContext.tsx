@@ -104,6 +104,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [terminal, setTerminal] = useState<TerminalCfg | null>(null);
   const [device, setDevice] = useState<DeviceInfo | undefined>(undefined);
   const [branches, setBranches] = useState<BranchRow[]>([]);
+  // v2.4.13: nombres de sucursal pedidos a /auth/me (ligero) para no mostrar el ID en bruto
+  // mientras el catálogo completo de esa sucursal todavía no se ha descargado.
+  const [remoteBranches, setRemoteBranches] = useState<BranchRow[]>([]);
   const [online, setOnline] = useState(true);
   const [apiUrl, setApiUrlState] = useState('');
   const [mode, setMode] = useState<ScanMode>('venta');
@@ -181,9 +184,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const actor: Actor | null = useMemo(() => (session ? { userId: session.user.id, userName: session.user.name, role: session.user.role } : null), [session]);
 
   const myBranches = useMemo<BranchRow[]>(
-    () => (session ? session.user.branchIds.map((id) => branches.find((b) => b.id === id) ?? { id, code: '', name: `Sucursal ${id.slice(0, 8)}` }) : []),
-    [session, branches],
+    () =>
+      session
+        ? session.user.branchIds.map(
+            (id) =>
+              branches.find((b) => b.id === id) ??
+              remoteBranches.find((b) => b.id === id) ?? { id, code: '', name: `Sucursal ${id.slice(0, 8)} (sin descargar)` },
+          )
+        : [],
+    [session, branches, remoteBranches],
   );
+
+  // v2.4.13: en cuanto hay sesión y red, pide /auth/me para tener el nombre real de cada sucursal
+  // asignada al usuario (antes de que se descargue su catálogo completo al elegirla).
+  useEffect(() => {
+    if (!session || !online) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await api.get<{ branches: { id: string; code: string; name: string }[] }>('/auth/me');
+        if (!cancelled) setRemoteBranches(me.branches.map((b) => ({ id: b.id, code: b.code, name: b.name })));
+      } catch {
+        /* sin red o token vencido: se queda con el nombre local o, si falta, el de respaldo */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, online, api]);
 
   // ───────────── Red ─────────────
   useEffect(() => {
@@ -340,6 +368,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSession(null);
     setNeedsOnlineLogin(false);
     setMode('venta');
+    setRemoteBranches([]);
   }, []);
 
   const setApiUrl = useCallback(async (url: string) => {

@@ -1,7 +1,7 @@
 /** /cash: sesiones de caja. Las altas, movimientos y cortes pasan por applySyncOp (misma lógica que la sincronización). */
 import { Router } from 'express';
 import { z } from 'zod';
-import { can, computeCashBreakdown, newId, sumDenominations } from '@amara/shared';
+import { can, computeCashBreakdown, mxDayBounds, mxTodayKey, newId, sumDenominations } from '@amara/shared';
 import type { SyncOp } from '@amara/shared';
 import { cashCloseSchema, cents, uuid } from '@amara/shared/schemas';
 import { assertBranch, branchScope, requirePerm } from '../auth.ts';
@@ -20,6 +20,39 @@ import { audit } from '../audit.ts';
 export const cashRouter = Router();
 const repo = createMongoSyncRepo();
 const ctx = (): ApplyContext => ({ now: () => new Date(), source: 'servidor' });
+
+/**
+ * v2.4.17: cajas abiertas desde un día calendario anterior (México) que nadie cerró.
+ * Para el aviso "esta caja quedó abierta desde ayer y no se cerró" en Notificaciones.
+ */
+cashRouter.get(
+  '/open-overnight',
+  requirePerm('caja.corte'),
+  ah(async (req, res) => {
+    const user = sessionUser(req);
+    const scope = branchScope(user, undefined);
+    const todayStart = mxDayBounds(mxTodayKey()).from;
+    const items = await col('cash_sessions')
+      .find({ branchId: { $in: scope }, status: 'abierta', openedAt: { $lt: todayStart } })
+      .sort({ openedAt: 1 })
+      .toArray();
+    const branchIds = [...new Set(items.map((s) => s.branchId as string))];
+    const terminalIds = [...new Set(items.map((s) => s.terminalId as string))];
+    const [branches, terminals] = await Promise.all([
+      branchIds.length ? col('branches').find({ _id: { $in: branchIds } }).project({ name: 1 }).toArray() : Promise.resolve([]),
+      terminalIds.length ? col('terminals').find({ _id: { $in: terminalIds } }).project({ code: 1, assignedTo: 1 }).toArray() : Promise.resolve([]),
+    ]);
+    const bName = new Map(branches.map((b) => [b._id as unknown as string, b.name as string]));
+    const tLabel = new Map(terminals.map((t) => [t._id as unknown as string, `${t.code as string}${t.assignedTo ? ` (${t.assignedTo as string})` : ''}`]));
+    res.json({
+      items: items.map((s) => ({
+        id: s._id, branchId: s.branchId, branchName: bName.get(s.branchId as string) ?? '',
+        terminalId: s.terminalId, terminalLabel: tLabel.get(s.terminalId as string) ?? s.terminalId,
+        openedAt: s.openedAt, openingCents: s.openingCents,
+      })),
+    });
+  }),
+);
 
 cashRouter.get(
   '/sessions',

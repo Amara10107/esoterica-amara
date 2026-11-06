@@ -111,3 +111,15 @@ Quedan solo en la web: crear/editar usuarios y sucursales, alta de permisos temp
 - **Terminales (web):** el modal "Datos de la terminal" (y "Copiar todo") ahora también incluye **Id de la sucursal** y **Código de sucursal** — exactamente lo que pide el formulario "Avanzado" del escritorio, por si alguna vez hace falta activar a mano. La pantalla normal del escritorio (usuario y contraseña) no necesita nada de esto desde la v2.4.8.
 - **Teléfono:** el panel ya se adapta a pantallas angostas (menú hamburguesa, tarjetas en una sola columna); se agregó un refuerzo para que la página no se desborde de lado a lado en pantallas muy angostas.
   - Importante: si en el teléfono el menú y el contenido se ven lado a lado pidiendo deslizar a los lados (como si fuera la versión de PC), revisa en Chrome el menú de los 3 puntos → si "Solicitar sitio de escritorio" está marcado, desmárcalo. Eso fuerza a cualquier página (no solo esta) a verse como en computadora.
+
+## v2.4.10 — Script para limpiar catálogo/existencias y terminales de prueba
+- Nuevo: `apps/api/src/clean-test-data.ts` (`npm run clean:test-data` dentro de `apps/api`). Borra el catálogo (productos, variantes, existencias) y las terminales de prueba `111` y `MU2`. No toca usuarios, sucursales, ventas, movimientos, auditoría, permisos ni tokens de seguridad.
+- Por seguridad corre en modo "solo mostrar" si no le agregas `--confirm`: cuenta y lista qué borraría, sin borrar nada, para revisar antes de confirmar.
+- Queda registrado en la auditoría (`sistema.limpieza_datos_prueba`) con los conteos exactos de lo borrado.
+
+## v2.4.11 — Segunda limpieza (historial) + usuarios de prueba
+- Nuevo: `apps/api/src/clean-history.ts` (`npm run clean:history`), segunda limpieza más a fondo: ventas, cortes de caja, anticipos, movimientos de inventario, transferencias, auditoría, permisos temporales y tokens de seguridad — y usuarios de prueba (deja solo a "gerente"). No toca sucursales, terminales ni catálogo. Mismo modo "solo mostrar" por seguridad, y se niega a correr si no existe ya un usuario "gerente" (para no dejar la cuenta sin acceso).
+
+## v2.4.12 — Corrige falsos "Sin conexión" en el escritorio
+- El escritorio usaba `net.isOnline()` de Electron para decidir si intentaba sincronizar. Esa función a veces dice "sin internet" en Windows aunque sí haya conexión (pasa con ciertas configuraciones de red/antivirus) — cuando eso ocurre, la app ni siquiera intentaba contactar al servidor (por eso no aparecía ninguna petición en los logs de Render, ni para "Sincronizar ahora" ni en automático).
+- Ahora siempre intenta sincronizar de verdad; el propio intento (con 20s de margen) decide si de verdad no hay conexión o fue otra cosa, igual que ya hacía el resto del sistema.

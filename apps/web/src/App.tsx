@@ -35,8 +35,8 @@ function Shell() {
   // El menú móvil se cierra al navegar.
   useEffect(() => setOpen(false), [location.pathname]);
 
-  const { enabled: notifEnabled, counts } = useNotifications();
-  const bell = badgeText(counts.total);
+  const { enabled: notifEnabled, bellCount } = useNotifications();
+  const bell = badgeText(bellCount);
 
   const visible = ROUTES.filter((r) => r.perm === null || can(r.perm));
   const groups = [...new Set(visible.map((r) => r.group))];
@@ -58,7 +58,7 @@ function Shell() {
                   <NavLink key={r.path} to={r.path} end={r.path === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                     {r.label}
                     {r.badge === 'notificaciones' && bell !== '' && (
-                      <span className="nav-badge" aria-label={`${counts.total} aviso(s) de existencias`}>{bell}</span>
+                      <span className="nav-badge" aria-label={`${bellCount} aviso(s)`}>{bell}</span>
                     )}
                   </NavLink>
                 ))}
@@ -75,7 +75,7 @@ function Shell() {
           </button>
           <div className="topbar-title">Panel administrativo</div>
           {notifEnabled && (
-            <NavLink to="/notificaciones" className="bell" aria-label={bell ? `Notificaciones: ${counts.total} producto(s) en o bajo su mínimo` : 'Notificaciones'} title="Existencias en o bajo el mínimo">
+            <NavLink to="/notificaciones" className="bell" aria-label={bell ? `Notificaciones: ${bellCount} aviso(s)` : 'Notificaciones'} title="Existencias bajas y cajas sin cerrar">
               <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
                 <path d="M12 3a6 6 0 0 0-6 6v3.6L4.3 16.2a1 1 0 0 0 .9 1.4h13.6a1 1 0 0 0 .9-1.4L18 12.6V9a6 6 0 0 0-6-6zm-2 16a2 2 0 0 0 4 0z" fill="currentColor" />
               </svg>

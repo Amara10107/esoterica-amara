@@ -9,6 +9,9 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "backup:mongo": "tsx src/backup-mongo.ts",
+    "clean:test-data": "tsx src/clean-test-data.ts",
+    "clean:history": "tsx src/clean-history.ts",
+    "check:dup-users": "tsx src/check-duplicate-users.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

@@ -10,11 +10,25 @@ import { LOW_STOCK_REFRESH_MS, countLowStock, normalizeLowStock, type LowStockCo
 import type { LowStockItem } from './lib/types-v2.ts';
 import { useAuth } from './context.tsx';
 
+/** v2.4.17: caja que sigue abierta desde un día calendario anterior (nadie la cerró). */
+export interface OpenCashRow {
+  id: string;
+  branchId: string;
+  branchName: string;
+  terminalId: string;
+  terminalLabel: string;
+  openedAt: string;
+  openingCents: number;
+}
+
 interface NotificationsCtx {
   /** ¿La persona puede ver notificaciones? */
   enabled: boolean;
   items: LowStockItem[];
   counts: LowStockCounts;
+  openCash: OpenCashRow[];
+  /** Total para la campanita/menú: existencias + cajas sin cerrar. */
+  bellCount: number;
   loading: boolean;
   error: string | null;
   /** Marca de tiempo (ms) de la última consulta correcta. */
@@ -28,6 +42,8 @@ const NotificationsContext = createContext<NotificationsCtx>({
   enabled: false,
   items: [],
   counts: EMPTY,
+  openCash: [],
+  bellCount: 0,
   loading: false,
   error: null,
   updatedAt: null,
@@ -39,7 +55,9 @@ export const useNotifications = () => useContext(NotificationsContext);
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user, can } = useAuth();
   const enabled = !!user && can('estadisticas.ver');
+  const canSeeOpenCash = !!user && can('caja.corte');
   const [items, setItems] = useState<LowStockItem[]>([]);
+  const [openCash, setOpenCash] = useState<OpenCashRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -58,9 +76,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     inflight.current = true;
     setLoading(true);
     try {
-      const raw = await api.get<unknown>('/stats/low-stock');
+      const [raw, openCashRes] = await Promise.all([
+        api.get<unknown>('/stats/low-stock'),
+        // Si por algún motivo no tiene el permiso, no se tira todo el resto de notificaciones por eso.
+        canSeeOpenCash ? api.get<{ items?: OpenCashRow[] }>('/cash/open-overnight').catch(() => ({ items: [] })) : Promise.resolve({ items: [] }),
+      ]);
       if (!alive.current) return;
       setItems(normalizeLowStock(raw));
+      setOpenCash(openCashRes.items ?? []);
       setError(null);
       setUpdatedAt(Date.now());
     } catch (e) {
@@ -69,11 +92,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       inflight.current = false;
       if (alive.current) setLoading(false);
     }
-  }, [enabled]);
+  }, [enabled, canSeeOpenCash]);
 
   useEffect(() => {
     if (!enabled) {
       setItems([]);
+      setOpenCash([]);
       setError(null);
       setUpdatedAt(null);
       return;
@@ -96,8 +120,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [enabled, load]);
 
   const value = useMemo<NotificationsCtx>(
-    () => ({ enabled, items, counts: countLowStock(items), loading, error, updatedAt, refresh: () => void load() }),
-    [enabled, items, loading, error, updatedAt, load],
+    () => ({ enabled, items, counts: countLowStock(items), openCash, bellCount: countLowStock(items).total + openCash.length, loading, error, updatedAt, refresh: () => void load() }),
+    [enabled, items, openCash, loading, error, updatedAt, load],
   );
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
 }

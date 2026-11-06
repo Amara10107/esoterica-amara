@@ -17,7 +17,8 @@
       },
       "permissions": [
         "CAMERA",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "android.permission.CAMERA"
       ]
     },
     "plugins": [
@@ -52,7 +53,12 @@
       ]
     ],
     "extra": {
-      "apiUrl": ""
-    }
+      "apiUrl": "",
+      "router": {},
+      "eas": {
+        "projectId": "34829d27-5b13-4bcd-9521-f04963241b40"
+      }
+    },
+    "owner": "vanesa_1"
   }
 }
